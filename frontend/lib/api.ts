@@ -407,7 +407,7 @@ export async function importCommunitySkills(selected: string[], url?: string): P
 
 // ====== Skill Store APIs (multi-source) ======
 
-export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'mattpocock' | 'openai' | 'custom';
+export type SkillSource = 'takton' | 'clawhub' | 'awesome-claude' | 'awesome-hermes' | 'mattpocock' | 'openai' | 'custom' | 'tevarn';
 
 export interface SkillStats {
   stars: number;

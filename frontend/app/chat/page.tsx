@@ -86,6 +86,11 @@ function ChatPageInner() {
         const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
         const [isStreaming, setIsStreaming] = useState(false);
   const [codingDelivery, setCodingDelivery] = useState<CodingDelivery | null>(null);
+
+  // 切会话时清交付卡，避免串台
+  useEffect(() => {
+    setCodingDelivery(null);
+  }, [currentSession?.id]);
         /** Stop 后等待服务端 idle，避免假停后仍收 stream_delta（按会话，防切会话误伤） */
         const [isStopping, setIsStopping] = useState(false);
         const stoppingBySessionRef = useRef<Record<string, boolean>>({});
@@ -756,16 +761,29 @@ function ChatPageInner() {
 
   // Durable Run 生命周期事件 → 状态行（tool.* 已由 tool_event 覆盖，不重复显示）
   const handleRunEvent = useCallback((msg: RunEventMessage) => {
-      // P1 coding delivery card
-      if (msg.event === 'coding.delivery' && msg.payload) {
-        setCodingDelivery(msg.payload as CodingDelivery);
+      // Unified: event === topic (backend fills both)
+      const ev = msg.event || msg.topic || '';
+      const d = (msg.data || msg.payload || {}) as Record<string, unknown>;
+
+      // coding delivery card (ignore cross-session if session_id present)
+      if (ev === 'coding.delivery' && (msg.payload || msg.data)) {
+        const sid = (msg as { session_id?: string }).session_id;
+        const cur = useSessionStore.getState().currentSession?.id;
+        if (sid && cur && sid !== cur) return;
+        setCodingDelivery((msg.payload || msg.data) as CodingDelivery);
         return;
       }
-      if (msg.event === 'run.started') {
+      if (ev === 'run.started') {
         setCodingDelivery(null);
       }
-      const d = msg.data || {};
-      if (msg.topic === 'run.status_changed') {
+      // terminal events — clear streaming status
+      if (ev === 'run.completed' || ev === 'run.cancelled' || ev === 'run.failed') {
+        if (ev === 'run.completed') setStreamStatusDetail(t('run.done'));
+        else if (ev === 'run.failed') setStreamStatusDetail(t('run.runFailed'));
+        else setStreamStatusDetail(t('run.cancelled'));
+        // do not return — allow topic-style fallthrough no-ops
+      }
+      if (msg.topic === 'run.status_changed' || ev === 'run.status_changed') {
         const to = d.to || '';
         const keyMap: Record<string, Parameters<typeof t>[0]> = {
           planning: 'run.planning',
@@ -775,17 +793,17 @@ function ChatPageInner() {
         };
         const key = keyMap[to];
         if (key) setStreamStatusDetail(t(key));
-      } else if (msg.topic === 'approval.requested') {
+      } else if (msg.topic === 'approval.requested' || ev === 'approval.requested') {
         setStreamStatusDetail(`${t('run.waiting')}: ${d.tool || ''}`.trim());
-      } else if (msg.topic === 'approval.resolved') {
+      } else if (msg.topic === 'approval.resolved' || ev === 'approval.resolved') {
         setStreamStatusDetail(d.approved ? t('run.approved') : t('run.denied'));
-      } else if (msg.topic === 'run.completed') {
+      } else if (msg.topic === 'run.completed' || ev === 'run.completed') {
         setStreamStatusDetail(t('run.done'));
-      } else if (msg.topic === 'run.failed') {
+      } else if (msg.topic === 'run.failed' || ev === 'run.failed') {
         setStreamStatusDetail(t('run.runFailed'));
-      } else if (msg.topic === 'run.cancelled') {
+      } else if (msg.topic === 'run.cancelled' || ev === 'run.cancelled') {
         setStreamStatusDetail(t('run.cancelled'));
-      } else if (msg.topic === 'computer.exec') {
+      } else if (msg.topic === 'computer.exec' || ev === 'computer.exec') {
         // Agent Computer：按 agent_key 路由到对应终端 tab
         const key = (d.agent_key as string) || 'main';
         const label = (d.agent_label as string) || (key === 'main' ? 'Agent' : key);
@@ -1064,7 +1082,7 @@ const handleUserMessageAck = useCallback(
     }>,
     mode?: string,
     subAgentIds?: string[],
-    opts?: { regenerate?: boolean },
+    opts?: { regenerate?: boolean; control?: 'steer' | 'queue' | 'interrupt' | 'stop' },
   ) =>
     bridgeApi?.sendMessage(content, attachments, mode, subAgentIds, opts) ?? false;
   const sendStop = () => bridgeApi?.sendStop() ?? false;

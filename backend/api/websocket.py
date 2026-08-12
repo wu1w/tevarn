@@ -321,6 +321,7 @@ class ConnectionManager:
             "tool_event",
             "error",
             "content_reset",
+            "run_event",
         ):
             return
 
@@ -361,6 +362,16 @@ class ConnectionManager:
                     snap._delta_buf = []  # type: ignore[attr-defined]
             except Exception:
                 pass
+            self._maybe_flush_snapshot(session_id)
+            return
+
+        if msg_type == "run_event":
+            ev = str(message.get("event") or message.get("topic") or "")
+            if ev in ("run.completed", "run.cancelled", "run.failed"):
+                snap.state = "idle" if ev == "run.completed" else snap.state
+                if ev != "run.completed":
+                    snap.state = "idle"
+                snap.agent_running = False if not running else snap.agent_running
             self._maybe_flush_snapshot(session_id)
             return
 
@@ -1147,6 +1158,21 @@ async def websocket_endpoint(
             )
         except Exception:
             pass
+
+    # 重连：回放最近 run_event（同机 spill）
+    try:
+        from backend.agent.run_events import load_recent_events
+
+        recent = load_recent_events(session_id, after_seq=0, limit=40)
+        for ev in recent[-15:]:
+            try:
+                payload = dict(ev)
+                payload["replay"] = True
+                await manager.broadcast(session_id, payload)
+            except Exception:
+                pass
+    except Exception as re:
+        logger.debug("run_event replay skip: %s", re)
 
     # 初始化 Agent Loop
     agent = NexusAgentLoop(

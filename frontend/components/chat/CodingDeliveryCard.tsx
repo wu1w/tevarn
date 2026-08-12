@@ -114,7 +114,7 @@ export function CodingDeliveryCard({ delivery, onRollback }: Props) {
                   onClick={() => onRollback(c)}
                   className="rounded-md border border-border-subtle bg-elevated-bg px-2 py-0.5 text-[10px] text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan"
                 >
-                  {zh ? '回滚' : 'Rollback'} · {c.startsWith('rust:') ? `rust:${c.slice(5, 13)}` : (c.split('/').pop() || c)}
+                  {zh ? '回滚' : 'Rollback'} · {c.startsWith('rust:') ? `rust:${c.slice(5, 13)}` : (c.length === 32 ? c.slice(0, 8) : (c.split('/').pop() || c.slice(0, 12)))}
                 </button>
               ))}
             </div>
