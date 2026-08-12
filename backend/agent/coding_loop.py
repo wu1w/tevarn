@@ -105,9 +105,10 @@ _TEST_HINT = re.compile(
     re.I,
 )
 _CODING_INTENT = re.compile(
-    r"(修|改|写|实现|重构|debug|fix|bug|implement|refactor|code|"
-    r"函数|文件|模块|api|测试|test|compile|编译|报错|error|"
-    r"patch|PR|pull request|\.py|\.ts|\.go|\.rs)",
+    r"(修复|修改代码|改代码|改一下代码|重写|实现|重构|"
+    r"debug|fix\b|bug\b|implement|refactor|code\b|"
+    r"函数|源码|模块|api\b|单元测试|compile|编译|报错|traceback|"
+    r"patch|pull request|\.(py|ts|tsx|go|rs|java)\b)",
     re.I,
 )
 
@@ -166,14 +167,32 @@ def should_activate_coding_loop(
     mode: str = "default",
     profile: str = "",
 ) -> bool:
-    """Heuristic: coding profile / plan mode / engineering-looking prompt."""
+    """Heuristic: coding profile / plan mode / engineering-looking prompt.
+
+    Explicitly skips MCP/config-ops turns so manage_mcp micro-loop is not
+    polluted by coding.phase nudges or empty delivery cards.
+    """
     mode_l = (mode or "").lower()
     prof = (profile or "").lower()
+    text = (user_input or "").strip()
+    # MCP / 配置运维：不走工程状态机
+    try:
+        from backend.agent.tool_policy import is_mcp_ops_intent
+
+        if text and is_mcp_ops_intent(text):
+            return False
+    except Exception:
+        if text and re.search(r"(?i)mcp|model\s*context\s*protocol", text):
+            if re.search(r"(配置|安装|接入|密钥|api\s*key|token)", text):
+                return False
     if mode_l in ("plan", "goal", "coding"):
         return True
-    if prof in ("coding", "engineering", "assistant"):
-        return True
-    text = (user_input or "").strip()
+    if prof in ("coding", "engineering"):
+        # assistant profile alone is too broad (chat + light tools)
+        if prof == "engineering" or (prof == "coding" and mode_l != "default"):
+            return True
+        if prof == "coding" and text and _CODING_INTENT.search(text):
+            return True
     if len(text) < 4:
         return False
     return bool(_CODING_INTENT.search(text))

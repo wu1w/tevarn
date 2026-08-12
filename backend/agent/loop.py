@@ -818,8 +818,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 cl = start_coding_loop(
                     session_id,
                     goal=str(user_input or "")[:500],
-                    user_input=str(user_input or ""),
-                    mode=str(mode or "default"),
+                    user_input=(
+                        ""
+                        if getattr(self, "_config_micro_loop", None)
+                        else str(user_input or "")
+                    ),
+                    mode=(
+                        "default"
+                        if getattr(self, "_config_micro_loop", None)
+                        else str(mode or "default")
+                    ),
                 )
                 if cl.active:
                     await _emit_cl(
