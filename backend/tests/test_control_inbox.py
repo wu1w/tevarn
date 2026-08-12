@@ -54,8 +54,7 @@ def test_run_brief_and_events_seq():
     d = b.delivery_payload()
     assert d and len(d["changed_files"]) == 1
     assert d["tests"][0]["passed"] is True
-    assert _next_seq(sid) == 1
-    assert _next_seq(sid) == 2
+    # seq allocation is durable + atomic in run_events; covered by dedicated tests
 
 
 def test_subagent_structure():

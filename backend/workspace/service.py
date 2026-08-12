@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import json
 import logging
 import os
@@ -15,7 +17,7 @@ _ROOTS: dict[str, Path] = {}
 
 _STATE_FILE = Path(
     os.environ.get("TEVARN_WORKSPACE_STATE", "")
-    or str(Path.home() / ".tevarn" / "workspace_roots.json")
+    or str(get_tevarn_home() / "workspace_roots.json")
 )
 
 

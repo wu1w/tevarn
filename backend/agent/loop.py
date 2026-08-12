@@ -117,6 +117,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self.max_iterations = int(getattr(settings, "agent_max_iterations", 25) or 25)
         # 停止信号
         self._should_stop = False
+        self._config_micro_loop = None
+        self._thrash_force_final_override = None
+        self._pseudo_tool_leak_streak = 0
+        self._terminal_event_emitted = False
         self._llm_fail_streak = 0
         # RAG 服务（懒加载）
         self._rag_service = None
@@ -132,14 +136,17 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         WorkforceWorker 池让 loop 实例跨工单存活——init 重资源
         （repo 引用、RAG 懒加载缓存、context_manager）复用是收益，
         但 run 级状态泄漏是事故。每 run 前显式归零：
-        - _kernel_process/_kernel_process_options：进程归属每工单新建
+        - _kernel_process：进程归属每工单新建
+        - _kernel_process_options：若 dispatcher 已注入本轮预算/能力则 **保留**
         - _run_recorder：durable run 记录器每 run 新建
         - _search_fp_counter：重复搜索计数器跨工单累积会误拦截
         - _contract_wl_*：身份能力可能已变更，契约白名单重载
         - _should_stop：上一单的停止信号不能带进下一单
         """
+        # Dispatcher may set options *before* run(); do not wipe them here.
+        _preserve_opts = getattr(self, "_kernel_process_options", None)
         self._kernel_process = None
-        self._kernel_process_options = None
+        self._kernel_process_options = _preserve_opts
         self._last_kernel_process_id = None
         # 编制字段由 dispatcher 在派工时重设，此处不清 _workforce/_identity_*
         # （worker 池复用同一员工；跨工单身份不变）
@@ -799,6 +806,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             token_limit=_token_limit,
         )
         self._run_recorder = recorder
+        try:
+            recorder.generation = int(getattr(self, "_run_generation", 0) or 0) or None
+        except Exception:
+            pass
         await recorder.start(input_summary=user_input or "")
         try:
             from backend.agent.run_brief import reset_brief
@@ -1510,8 +1521,23 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     recorder.set_token_used(int(getattr(kernel_proc, "tokens_used", 0) or 0))
             except Exception as _silent_e:
                 logger.debug("suppressed: %s", _silent_e, exc_info=False)
+            _exit = str(getattr(self, "last_exit_reason", "") or "")
+            _fail_codes = {
+                "llm_stream_error",
+                "llm_error",
+                "provider_error",
+                "kernel_token_budget_exhausted",
+                "doom_loop",
+                "thrash",
+                "max_tool_rounds",
+                "error",
+            }
             if self._should_stop:
                 await recorder.cancel("stopped by user")
+            elif _exit in _fail_codes:
+                await recorder.finish_fail(
+                    error=f"{_exit}: {(result or '')[:400]}"
+                )
             else:
                 await recorder.finish_ok(final_summary=result or "")
             await _release_kernel_slot(

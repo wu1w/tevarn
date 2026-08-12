@@ -108,6 +108,7 @@ function ChatPageInner() {
         }, []);
         /** 流式活动时间戳：长时间无 delta 则视为卡住，露出恢复入口 */
         const lastStreamActivityRef = useRef<number>(0);
+        const seenRunEventIdsRef = useRef<Set<string>>(new Set());
         /** 假 Resuming：等 sync 完成后再 arm 短超时（弱网 auth+sync 常 >4s） */
         const syncSeenForResumeRef = useRef<Record<string, boolean>>({});
         const pendingResumeFallbackRef = useRef<Record<string, () => void>>({});
@@ -766,6 +767,21 @@ function ChatPageInner() {
       // Unified: event === topic (backend fills both)
       const ev = msg.event || msg.topic || '';
       const d = (msg.data || msg.payload || {}) as Record<string, unknown>;
+      // Dedup replay (event_id preferred, else session:seq:event)
+      const eid =
+        (msg as { event_id?: string }).event_id ||
+        (typeof msg.seq === 'number'
+          ? `${msg.session_id || ''}:${msg.seq}:${ev}`
+          : '');
+      if (eid) {
+        if (seenRunEventIdsRef.current.has(eid)) return;
+        seenRunEventIdsRef.current.add(eid);
+        if (seenRunEventIdsRef.current.size > 800) {
+          seenRunEventIdsRef.current = new Set(
+            [...seenRunEventIdsRef.current].slice(-400),
+          );
+        }
+      }
 
       // coding delivery card (ignore cross-session if session_id present)
       if (ev === 'coding.delivery' && (msg.payload || msg.data)) {
@@ -1981,7 +1997,9 @@ const handleUserMessageAck = useCallback(
                             onRollback={async (checkpoint) => {
                               try {
                                 const { restoreFileCheckpoint } = await import('@/lib/api');
-                                const r = await restoreFileCheckpoint(checkpoint);
+                                const r = await restoreFileCheckpoint(checkpoint, {
+                                  sessionId: currentSession?.id,
+                                });
                                 if (r?.ok) {
                                   addToast(
                                     (t('chat.checkpointRestored') as string) ||

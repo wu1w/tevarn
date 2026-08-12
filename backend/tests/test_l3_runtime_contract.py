@@ -72,7 +72,18 @@ def test_file_checkpoint_copies(tmp_path, monkeypatch):
     monkeypatch.setenv("TEVARN_FILE_BROWSER_ROOT", str(tmp_path))
     f = tmp_path / "sample.txt"
     f.write_text("hello-checkpoint", encoding="utf-8")
-    snap = snapshot_path_for_tool("file_write", {"filepath": "sample.txt"})
-    assert snap is not None
-    assert Path(snap).is_file()
-    assert Path(snap).read_text(encoding="utf-8") == "hello-checkpoint"
+    cid = snapshot_path_for_tool("file_write", {"filepath": "sample.txt"})
+    assert cid is not None
+    # opaque id (32-char hex), not a filesystem path
+    assert "/" not in cid and "\\" not in cid
+    assert len(cid) >= 16
+    from backend.agent.file_checkpoint import lookup_checkpoint, restore_checkpoint_file
+    entry = lookup_checkpoint(cid)
+    assert entry is not None
+    assert Path(entry["snapshot"]).is_file()
+    assert Path(entry["snapshot"]).read_text(encoding="utf-8") == "hello-checkpoint"
+    # mutate then restore via opaque id
+    f.write_text("mutated", encoding="utf-8")
+    r = restore_checkpoint_file(cid)
+    assert r.get("ok"), r
+    assert f.read_text(encoding="utf-8") == "hello-checkpoint"

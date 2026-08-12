@@ -1159,20 +1159,8 @@ async def websocket_endpoint(
         except Exception:
             pass
 
-    # 重连：回放最近 run_event（同机 spill）
-    try:
-        from backend.agent.run_events import load_recent_events
-
-        recent = load_recent_events(session_id, after_seq=0, limit=40)
-        for ev in recent[-15:]:
-            try:
-                payload = dict(ev)
-                payload["replay"] = True
-                await manager.broadcast(session_id, payload)
-            except Exception:
-                pass
-    except Exception as re:
-        logger.debug("run_event replay skip: %s", re)
+    # Replay only via explicit sync { after_seq } — never on bare connect
+    # (auth_ok → client sync carries after_seq; avoids double replay)
 
     # 初始化 Agent Loop
     agent = NexusAgentLoop(

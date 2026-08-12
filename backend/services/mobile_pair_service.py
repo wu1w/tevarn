@@ -13,6 +13,8 @@ tevarn://pair?v=4&pair_id=…&code=…&host=…&port=…&exp=…&mesh=auto
 
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import ipaddress
 import json
 import logging
@@ -40,7 +42,7 @@ def _tevarn_dir() -> Path:
     override = os.environ.get("TEVARN_DATA_DIR", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".tevarn"
+    return get_tevarn_home()
 
 
 def _read_json(path: Path, default: Any) -> Any:

@@ -6,6 +6,8 @@ Storage: ~/.tevarn/vps_relay.json (0600)
 
 from __future__ import annotations
 
+from backend.core.config import get_tevarn_home
+
 import json
 import logging
 import os
@@ -25,7 +27,7 @@ def _tevarn_dir() -> Path:
     override = os.environ.get("TEVARN_DATA_DIR", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".tevarn"
+    return get_tevarn_home()
 
 
 def _cfg_path() -> Path:
