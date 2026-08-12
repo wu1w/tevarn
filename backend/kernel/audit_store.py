@@ -15,7 +15,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = os.path.expanduser("~/.tevarn/kernel_events.jsonl")
+def _default_audit_path() -> str:
+    try:
+        from backend.core.config import get_tevarn_home
+        return str(get_tevarn_home() / "kernel_events.jsonl")
+    except Exception:
+        return os.path.expanduser("~/.tevarn/kernel_events.jsonl")
+
+
+_DEFAULT_PATH = _default_audit_path()
 _TAIL_LOAD_LIMIT = 200  # 启动时只回放尾部，链验证按需全量读文件
 # H2-C2 rotation defaults
 _MAX_BYTES = int(os.environ.get("TEVARN_AUDIT_MAX_BYTES", str(32 * 1024 * 1024)) or 0) or (

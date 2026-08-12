@@ -662,11 +662,10 @@ async def restore_file_checkpoint(
     cp_id = str(body.get("checkpoint_id") or "").strip()
     backend = str(body.get("backend") or "").strip().lower()
     session_id_raw = str(body.get("session_id") or "").strip()
-    workspace_override = str(
-        body.get("workspace_root") or body.get("workspace") or ""
-    ).strip()
-    root_for_restore = workspace_override
-    if not root_for_restore and session_id_raw and current_user is not None:
+    # Never trust client absolute workspace paths (shared-deploy safety).
+    # Only session_id → server-side config may bind workspace.
+    root_for_restore = ""
+    if session_id_raw and current_user is not None:
         try:
             import uuid as _uuid
 

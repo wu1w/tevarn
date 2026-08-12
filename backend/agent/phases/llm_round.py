@@ -217,7 +217,19 @@ async def _run_llm_round_body(
                     break
                 except Exception as _chunk_e:
                     logger.warning("LLM stream chunk error: %s", _chunk_e)
-                    break
+                    # Do NOT treat as empty reply — surface provider/network error
+                    result.action = "break"
+                    result.final_content = (
+                        f"⚠️ 模型流式输出异常：{_chunk_e}\n"
+                        "这通常是网络、API Key 或上游服务问题，请检查后重试。"
+                    )
+                    try:
+                        await loop._push_status(
+                            session_id, "error", f"LLM stream: {_chunk_e}"
+                        )
+                    except Exception:
+                        pass
+                    return result
                 _pending = asyncio.create_task(_ait.__anext__())
                 _last_hb = time.monotonic()  # any chunk resets silence timer
 

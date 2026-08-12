@@ -74,11 +74,16 @@ class RunRecorder:
             logger.debug("run_recorder publish %s failed: %s", topic, e)
 
     def _base_payload(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "run_id": str(self.run_id) if self.run_id else None,
             "session_id": str(self.session_id),
             "mode": self.mode,
         }
+        gen = getattr(self, "generation", None)
+        if gen is not None:
+            out["generation"] = int(gen)
+            out["run_generation"] = int(gen)
+        return out
 
     def _next_seq(self) -> int:
         self._seq += 1

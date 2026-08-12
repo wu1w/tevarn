@@ -32,6 +32,11 @@ def _data_dir() -> Path:
     env = (os.environ.get("TEVARN_DATA_DIR") or "").strip()
     if env:
         return Path(env)
+    try:
+        from backend.core.config import get_tevarn_home
+        return get_tevarn_home() / "data"
+    except Exception:
+        pass
     appdata = (os.environ.get("APPDATA") or "").strip()
     if appdata:
         return Path(appdata) / "tevarn" / "data"

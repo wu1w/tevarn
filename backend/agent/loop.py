@@ -755,6 +755,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         sub_agent_ids: list[str],
     ) -> str:
         """Durable Run 包装：recorder 创建/收尾 + 调用 _run_locked"""
+        # Per-run state reset (must be first — loop instance is reused)
+        self._reset_run_state()
         _ws_reset = lambda: None  # noqa: E731
         # Durable Run（Phase 0.5.2）：一次 run() = 一条 AgentRun 记录
         from backend.agent.run_recorder import RunRecorder
