@@ -59,6 +59,8 @@ async def run_subagent(
     parent_run_id: uuid.UUID | None = None,
     depth: int = 0,
     parent_kernel_process_id: str | None = None,
+    workspace_root: str | None = None,
+    worktree_name: str | None = None,
 ) -> str:
     """以子代理 persona 跑一个带工具的迷你 Run，返回结果文本。
 
@@ -180,9 +182,16 @@ async def run_subagent(
         except Exception as _pe:
             logger.debug("subagent parent session read skip: %s", _pe)
         if _parent_user_id is not None:
-            _child_cfg = _parent_cfg
+            _child_cfg = dict(_parent_cfg)
             _child_cfg["is_subagent"] = True
             _child_cfg["parent_session_id"] = str(sid)
+            if workspace_root:
+                _child_cfg["workspace_root"] = str(workspace_root)
+                _child_cfg["file_browser_root"] = str(workspace_root)
+                _child_cfg["cwd"] = str(workspace_root)
+                _child_cfg["worktree_isolated"] = True
+                if worktree_name:
+                    _child_cfg["worktree_name"] = str(worktree_name)
             await _child_repo.create(
                 {
                     "id": _new_sid,

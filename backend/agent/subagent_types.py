@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -121,9 +123,14 @@ async def run_typed_subagent(
 
             root = find_git_root(Path(resolve_agent_workspace_root()))
             if root is not None:
-                info = add_worktree(root, name=f"sub-{spec.kind}-{uuid.uuid4().hex[:8]}")
+                _wt_name = f"sub-{spec.kind}-{uuid.uuid4().hex[:8]}"
+                info = add_worktree(
+                    root,
+                    name=_wt_name,
+                    session_id=str(session_id) if session_id else None,
+                )
                 wt_path = info.path
-                logger.info("subagent worktree: %s", wt_path)
+                logger.info("subagent worktree isolated path=%s name=%s", wt_path, _wt_name)
         except Exception as e:
             logger.debug("worktree skipped: %s", e)
 
@@ -157,6 +164,8 @@ async def run_typed_subagent(
             parent_run_id=parent_run_id,
             depth=depth,
             parent_kernel_process_id=parent_kernel_process_id,
+            workspace_root=wt_path,
+            worktree_name=(Path(wt_path).name if wt_path else None),
         )
     finally:
         if cleanup:

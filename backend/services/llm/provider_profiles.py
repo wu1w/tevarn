@@ -84,7 +84,23 @@ _PROFILES: dict[str, ProviderProfile] = {
             r"\bo1\b",
             r"\bo3\b",
             r"\bo4-mini\b",
+            r"\bgpt-5\b",
             r"reasoner",
+            r"thinking",
+        ),
+    ),
+    "gemini": ProviderProfile(
+        family="gemini",
+        protocol="openai-compatible",
+        cache_mode="implicit",
+        merge_system_messages=True,
+        default_context_window=1_000_000,
+        stream_include_usage=True,
+        openai_prompt_cache_key=False,
+        recommended_compress_model_hint="gemini-2.0-flash",
+        reasoning_model_patterns=(
+            r"gemini-3",
+            r"gemini-2\.5",
             r"thinking",
         ),
     ),
@@ -260,6 +276,8 @@ _PROVIDER_ID_MAP: dict[str, str] = {
     "anthropic": "anthropic",
     "claude": "anthropic",
     "openai": "openai",
+    "gemini": "gemini",
+    "google": "gemini",
     "xai": "xai",
     "xai-oauth": "xai",
     "kimi-plan": "kimi",
@@ -353,7 +371,7 @@ def _family_from_model(model: str) -> str | None:
         if org in ("anthropic", "openai", "x-ai", "xai", "deepseek", "qwen", "google"):
             if org in ("x-ai", "xai"):
                 return "xai"
-            return org if org != "google" else "generic"
+            return "gemini" if org == "google" else org
         if org in ("zhipu", "z-ai", "thudm"):
             return "glm"
         if org in ("minimax",):

@@ -61,8 +61,18 @@ class AnthropicService(LLMService):
             headers["x-api-key"] = self.api_key
         # Prompt caching: beta header required on many accounts / older gateways;
         # GA still accepts it. Without this, cache_control may be ignored.
+        betas: list[str] = []
         if self._cache_enabled():
-            headers["anthropic-beta"] = "prompt-caching-2024-07-31"
+            betas.append("prompt-caching-2024-07-31")
+        # Fine-grained tool input streaming (Claude 4+/Sonnet 4.5+) — optional
+        try:
+            from backend.core.config import settings as _st
+            if bool(getattr(_st, "agent_anthropic_fine_grained_tools", True)):
+                betas.append("fine-grained-tool-streaming-2025-05-14")
+        except Exception:
+            betas.append("fine-grained-tool-streaming-2025-05-14")
+        if betas:
+            headers["anthropic-beta"] = ",".join(dict.fromkeys(betas))
         return headers
 
     # Injected when compress/history lost the real tool row (Anthropic requires pairing).

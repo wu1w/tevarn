@@ -14,6 +14,9 @@ class ToolCall(BaseModel):
     id: str
     name: str
     arguments: dict[str, Any]
+    # Gemini OpenAI-compat: pass back on next turn (thought_signature)
+    extra_content: dict[str, Any] | None = None
+    thought_signature: str | None = None
 
 
 class LLMResponse(BaseModel):

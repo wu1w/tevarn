@@ -27,6 +27,9 @@ def merge_stream_tool_delta(
 
     Official Chat Completions streaming: each delta carries `index`; id/name may
     arrive on first chunk and arguments are concatenated across chunks.
+
+    Gemini OpenAI-compat may attach ``extra_content.google.thought_signature`` on
+    tool_call parts — preserve for multi-turn function calling (required on Gemini 3).
     """
     index = int(tc.get("index", 0) or 0)
     fn = tc.get("function") or {}
@@ -36,6 +39,10 @@ def merge_stream_tool_delta(
             "name": fn.get("name") or "",
             "arguments": fn.get("arguments") or "",
         }
+        if tc.get("extra_content") is not None:
+            accumulated[index]["extra_content"] = tc.get("extra_content")
+        if tc.get("thought_signature") is not None:
+            accumulated[index]["thought_signature"] = tc.get("thought_signature")
         return
     entry = accumulated[index]
     if tc.get("id"):
@@ -44,6 +51,39 @@ def merge_stream_tool_delta(
         entry["name"] = fn["name"]
     if fn.get("arguments"):
         entry["arguments"] = (entry.get("arguments") or "") + fn["arguments"]
+    if tc.get("extra_content") is not None:
+        entry["extra_content"] = tc.get("extra_content")
+    if tc.get("thought_signature") is not None:
+        entry["thought_signature"] = tc.get("thought_signature")
+
+
+def _tool_call_from_openai(tc: dict[str, Any]) -> ToolCall:
+    """Build ToolCall preserving Gemini thought_signature / extra_content."""
+    fn = tc.get("function") or {}
+    args_raw = fn.get("arguments") or "{}"
+    if isinstance(args_raw, dict):
+        args = args_raw
+    else:
+        try:
+            args = json.loads(args_raw) if args_raw else {}
+        except Exception:
+            args = {"_raw": str(args_raw)[:4000]}
+    extra = tc.get("extra_content")
+    if extra is not None and not isinstance(extra, dict):
+        extra = None
+    sig = tc.get("thought_signature")
+    if sig is None and isinstance(extra, dict):
+        try:
+            sig = (extra.get("google") or {}).get("thought_signature")
+        except Exception:
+            sig = None
+    return ToolCall(
+        id=str(tc.get("id") or f"call_{uuid.uuid4().hex[:8]}"),
+        name=str(fn.get("name") or ""),
+        arguments=args if isinstance(args, dict) else {},
+        extra_content=extra,
+        thought_signature=str(sig) if sig else None,
+    )
 
 
 class OpenAICompatibleService(LLMService):
@@ -175,12 +215,14 @@ class OpenAICompatibleService(LLMService):
         from .provider_profiles import explicit_cache_enabled
 
         prof = self.profile
-        if getattr(prof, "stream_include_usage", True) and payload.get("stream"):
-            # OpenAI + many compat gateways; harmless if ignored
+        if payload.get("stream"):
+            # OpenAI docs: usage only on final chunk when stream_options.include_usage=true
+            # Safe no-op on gateways that ignore unknown fields.
             so = payload.get("stream_options")
             if not isinstance(so, dict):
                 so = {}
-            so = {**so, "include_usage": True}
+            if getattr(prof, "stream_include_usage", True) or True:
+                so = {**so, "include_usage": True}
             payload["stream_options"] = so
 
         # OpenAI official cache key
@@ -663,24 +705,12 @@ class OpenAICompatibleService(LLMService):
 
                     if tool_calls:
                         for tc in tool_calls:
-                            try:
-                                raw_args = (tc.get("function") or {}).get("arguments")
-                                if isinstance(raw_args, str):
-                                    args = json.loads(raw_args)
-                                else:
-                                    args = raw_args or {}
-                            except (json.JSONDecodeError, KeyError, TypeError):
-                                args = {}
-                            if not isinstance(args, dict):
-                                args = {"value": args}
+                            if not isinstance(tc, dict):
+                                continue
                             yield LLMChunk(
                                 message_id=message_id,
                                 delta="",
-                                tool_call=ToolCall(
-                                    id=tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                    name=(tc.get("function") or {}).get("name", ""),
-                                    arguments=args,
-                                ),
+                                tool_call=_tool_call_from_openai(tc),
                             )
                     if reasoning:
                         yield LLMChunk(
@@ -760,21 +790,22 @@ class OpenAICompatibleService(LLMService):
                 if not name:
                     logger.warning("Skipping stream tool_call with empty name: %s", tc_data)
                     continue
-                try:
-                    args = json.loads(tc_data.get("arguments") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                if not isinstance(args, dict):
-                    args = {"value": args}
+                shaped = {
+                    "id": tc_data.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                    "function": {
+                        "name": name,
+                        "arguments": tc_data.get("arguments") or "{}",
+                    },
+                }
+                if tc_data.get("extra_content") is not None:
+                    shaped["extra_content"] = tc_data.get("extra_content")
+                if tc_data.get("thought_signature") is not None:
+                    shaped["thought_signature"] = tc_data.get("thought_signature")
                 out.append(
                     LLMChunk(
                         message_id=message_id,
                         delta="",
-                        tool_call=ToolCall(
-                            id=tc_data.get("id") or f"call_{uuid.uuid4().hex[:8]}",
-                            name=name,
-                            arguments=args,
-                        ),
+                        tool_call=_tool_call_from_openai(shaped),
                     )
                 )
             return out
