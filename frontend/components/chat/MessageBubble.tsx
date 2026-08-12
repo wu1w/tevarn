@@ -131,7 +131,7 @@ function MessageBubbleInner({
           : {};
       const hasResult = dtc.result !== undefined && dtc.result !== null;
       // 非流式历史：禁止残留 running（结果常在独立 tool 消息里，assistant.tool_calls 无 result）
-      let status: ToolCallData['status'] =
+      const status: ToolCallData['status'] =
         dtc.status === 'failed'
           ? 'failed'
           : dtc.status === 'completed' || hasResult

@@ -64,7 +64,9 @@ export default function MemoryPage() {
 
   // audit-fix: 搜索激活时，filterType 变化触发的全量刷新不得覆盖搜索结果（竞态）
   const searchQueryRef = useRef('');
-  searchQueryRef.current = searchQuery;
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
 
   useEffect(() => {
     if (searchQueryRef.current.trim()) return;

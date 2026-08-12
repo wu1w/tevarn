@@ -82,17 +82,43 @@ async def run_epilogue(
                     detail=phase_label(cl.phase),
                     payload={"phase": cl.phase.value, "active": cl.active},
                 )
-        await emit_run_event(
-            getattr(loop, "ws_manager", None),
-            session_id,
-            "run.completed" if not loop._should_stop else "run.cancelled",
-            detail=(final_content or "")[:120],
+        # Terminal event: only if RunRecorder has not already published
+        _rec = getattr(loop, "_run_recorder", None)
+        _already = bool(
+            getattr(loop, "_terminal_event_emitted", False)
+            or (
+                _rec is not None
+                and str(getattr(_rec, "_status", "") or "").lower()
+                in ("done", "failed", "cancelled", "interrupted")
+            )
         )
-        if not loop._should_stop:
+        if not _already:
+            await emit_run_event(
+                getattr(loop, "ws_manager", None),
+                session_id,
+                "run.completed" if not loop._should_stop else "run.cancelled",
+                detail=(final_content or "")[:120],
+                run_id=str(getattr(_rec, "run_id", "") or "") or None,
+            )
+            try:
+                loop._terminal_event_emitted = True
+            except Exception:
+                pass
+        # Always drop ephemeral run state (stop/error/success)
+        try:
             drop_brief(session_id)
             drop_coding_loop(session_id)
+        except Exception:
+            pass
     except Exception as _del_e:
         logger.debug("coding delivery emit skip: %s", _del_e)
+        try:
+            from backend.agent.coding_loop import drop_coding_loop
+            from backend.agent.run_brief import drop_brief
+            drop_brief(session_id)
+            drop_coding_loop(session_id)
+        except Exception:
+            pass
 
     # 7.5 多信源最终聚合（额外一次无工具 LLM，避免「四个都对」并列）
     try:

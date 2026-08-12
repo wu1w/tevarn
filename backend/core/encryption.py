@@ -26,7 +26,11 @@ def _secrets_file_path() -> Path:
     override = os.environ.get("TEVARN_SECRETS_FILE", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".tevarn" / "secrets.json"
+    try:
+        from backend.core.config import get_tevarn_home
+        return get_tevarn_home() / "secrets.json"
+    except Exception:
+        return Path.home() / ".tevarn" / "secrets.json"
 
 
 def _derive_key_from_jwt_secret() -> bytes:

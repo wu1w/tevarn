@@ -1252,8 +1252,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         # the iteration budget (was 40 → blocked file_write mid-scaffold).
                         try:
                             _goalish = bool(
-                                goal_mode
-                                or str(mode or "").lower() in ("goal", "default")
+                                str(mode or "").lower() in ("goal", "okr", "default")
                             )
                             _iter_budget = int(
                                 getattr(self, "max_iterations", 0)
@@ -2183,6 +2182,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
 # S1/S3/S10/S12: thin/search caps + plan mode + diff-first
         try:
+            # F821 fix: goal_mode resolved later; provisional from mode until then
+            goal_mode = str(mode or "").strip().lower() in ("goal", "okr")
             from backend.agent.tool_policy import (
                 is_search_only_intent,
                 is_thin_chat_intent,

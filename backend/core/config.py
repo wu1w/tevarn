@@ -73,7 +73,7 @@ def _secrets_file_path() -> Path:
     override = os.environ.get("TEVARN_SECRETS_FILE", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".tevarn" / "secrets.json"
+    return get_tevarn_home() / "secrets.json"
 
 
 def _load_or_generate_secret(kind: str) -> str:

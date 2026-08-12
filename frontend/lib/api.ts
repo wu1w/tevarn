@@ -2333,7 +2333,7 @@ export async function rejectEvolutionProposal(id: string): Promise<EvolutionProp
 /** Unified restore: Python snapshot path or Rust checkpoint id (`rust:<id>`). */
 export async function restoreFileCheckpoint(
   snapshotPathOrId: string,
-  opts?: { checkpointId?: string }
+  opts?: { checkpointId?: string; sessionId?: string; workspaceRoot?: string }
 ): Promise<{
   ok: boolean;
   restored?: string;
@@ -2355,6 +2355,8 @@ export async function restoreFileCheckpoint(
     body.path = raw;
     body.backend = 'python';
   }
+  if (opts?.sessionId) body.session_id = opts.sessionId;
+  if (opts?.workspaceRoot) body.workspace_root = opts.workspaceRoot;
   const res = await api.post('/files/checkpoint/restore', body);
   return res.data;
 }

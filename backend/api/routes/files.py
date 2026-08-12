@@ -661,6 +661,39 @@ async def restore_file_checkpoint(
     raw = str(body.get("path") or body.get("snapshot") or "").strip()
     cp_id = str(body.get("checkpoint_id") or "").strip()
     backend = str(body.get("backend") or "").strip().lower()
+    session_id_raw = str(body.get("session_id") or "").strip()
+    workspace_override = str(
+        body.get("workspace_root") or body.get("workspace") or ""
+    ).strip()
+    root_for_restore = workspace_override
+    if not root_for_restore and session_id_raw and current_user is not None:
+        try:
+            import uuid as _uuid
+            from backend.repositories.session_repo import AsyncSessionRepository
+
+            srepo = AsyncSessionRepository()
+            sid = _uuid.UUID(session_id_raw)
+            sess = await srepo.get_by_id(sid)
+            if sess is not None:
+                owner = getattr(sess, "user_id", None)
+                if owner is not None and str(owner) != str(
+                    getattr(current_user, "id", "")
+                ):
+                    raise HTTPException(
+                        status_code=403, detail="session not owned by user"
+                    )
+                cfg = getattr(sess, "config", None) or {}
+                if isinstance(cfg, dict):
+                    root_for_restore = str(
+                        cfg.get("workspace_root")
+                        or cfg.get("file_browser_root")
+                        or cfg.get("cwd")
+                        or ""
+                    ).strip()
+        except HTTPException:
+            raise
+        except Exception as _se:
+            logger.debug("restore session workspace resolve skip: %s", _se)
 
     if raw.startswith("rust:"):
         backend = backend or "rust"
@@ -676,10 +709,20 @@ async def restore_file_checkpoint(
 
     def _try_python(key: str) -> dict | None:
         from backend.agent.file_checkpoint import restore_checkpoint_file
+        from backend.tools.permissions import run_workspace_context
+        from contextlib import nullcontext
 
-        result = restore_checkpoint_file(key)
+        ctx = (
+            run_workspace_context(root_for_restore)
+            if root_for_restore
+            else nullcontext()
+        )
+        with ctx:
+            result = restore_checkpoint_file(key)
         if result.get("ok"):
             result["backend"] = "python"
+            if root_for_restore:
+                result["workspace_root"] = root_for_restore
             return result
         errors.append(str(result.get("error") or "python restore failed"))
         return None

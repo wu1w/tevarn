@@ -1455,9 +1455,9 @@ async def websocket_endpoint(
                                 pass
                         continue
                     if control == "stop":
+                        # Align with dedicated stop: cancel + bump generation + drop state
                         if not manager.stop_agent_loop(session_id):
                             agent.stop()
-                        # stop 丢弃未执行的 queue，避免之后被意外执行
                         try:
                             from backend.agent.control_inbox import get_inbox
                             n = get_inbox(session_id).clear_queue()
@@ -1465,6 +1465,9 @@ async def websocket_endpoint(
                                 logger.info("stop cleared %s queued msgs session=%s", n, session_id)
                         except Exception:
                             pass
+                        await manager.cancel_agent(session_id, wait=6.0)
+                        manager.end_run_snapshot(session_id)
+                        manager.bump_run_generation(session_id)
                         try:
                             from backend.agent.coding_loop import drop_coding_loop
                             from backend.agent.run_brief import drop_brief
@@ -1534,9 +1537,21 @@ async def websocket_endpoint(
                 # P1：必须 stop 运行中实例，不是本连接新建的空壳 agent
                 if not manager.stop_agent_loop(session_id):
                     agent.stop()
+                try:
+                    from backend.agent.control_inbox import get_inbox
+                    get_inbox(session_id).clear_queue()
+                except Exception:
+                    pass
                 await manager.cancel_agent(session_id, wait=6.0)
                 manager.end_run_snapshot(session_id)
                 manager.bump_run_generation(session_id)  # 使旧 task late event 失效
+                try:
+                    from backend.agent.coding_loop import drop_coding_loop
+                    from backend.agent.run_brief import drop_brief
+                    drop_coding_loop(session_id)
+                    drop_brief(session_id)
+                except Exception:
+                    pass
                 await manager.broadcast(
                     session_id,
                     {"type": "status", "state": "idle", "detail": "Generation stopped by user"},

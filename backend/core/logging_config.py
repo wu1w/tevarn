@@ -152,7 +152,11 @@ def setup_logging(
         max_bytes: 单个日志文件最大字节数
         backup_count: 保留的日志文件数
     """
-    log_dir = log_dir or os.path.join(str(Path.home()), ".tevarn", "logs")
+    try:
+        from backend.core.config import get_tevarn_home
+        log_dir = log_dir or str(get_tevarn_home() / "logs")
+    except Exception:
+        log_dir = log_dir or os.path.join(str(Path.home()), ".tevarn", "logs")
     log_level = log_level or getattr(settings, "LOG_LEVEL", "INFO")
     json_output = json_output if json_output is not None else (not sys.stderr.isatty())
 
