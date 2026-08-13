@@ -109,3 +109,27 @@ def test_charge_fills_by_model_day_and_no_double_totals(tmp_path: Path, monkeypa
     assert snap3["by_model_day"][mk2][day]["tokens"] == 210
     assert snap3["by_day"][day]["tokens"] == 360
     ul.reset_for_tests()
+
+
+def test_process_cost_returns_provider_fields_not_system(tmp_path: Path, monkeypatch):
+    path = tmp_path / "usage_ledger.json"
+    monkeypatch.setenv("TEVARN_USAGE_LEDGER", str(path))
+    ul.reset_for_tests()
+    ul.charge(
+        process_id="proc-live",
+        family="openai",
+        tokens=100,
+        billable=80,
+        prompt=90,
+        completion=10,
+        cache_read=20,
+        estimated=False,
+    )
+    got = ul.process_cost("proc-live")
+    assert got["prompt"] == 90
+    assert got["completion"] == 10
+    assert got["cache_read"] == 20
+    assert ul.process_cost("missing") == {}
+    assert ul.process_cost("system") == {}
+    assert ul.process_cost(None) == {}
+    ul.reset_for_tests()

@@ -270,6 +270,7 @@ async def test_file_read_schema_default_limit_matches_executor():
 
 @pytest.mark.asyncio
 async def test_file_read_identical_reread_uses_cache(ws, tmp_path, monkeypatch):
+    """Same-run (path, offset, limit) hits — live 5–6× dispatcher/court re-reads."""
     from backend.services.tools import executors as ex
 
     _file_read_cache_clear()
@@ -291,6 +292,36 @@ async def test_file_read_identical_reread_uses_cache(ws, tmp_path, monkeypatch):
     assert calls["n"] == 2
     assert "changed1" in out3
     assert out3 != out1
+    _file_read_cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_file_read_same_offset_limit_cache_stops_slice_reread(
+    ws, tmp_path, monkeypatch
+):
+    """Post-thinking re-reads of the same slice must not reopen the file."""
+    from backend.services.tools import executors as ex
+
+    _file_read_cache_clear()
+    _write(tmp_path, "dispatcher.py", "".join(f"L{i}\n" for i in range(1, 401)))
+    calls = {"n": 0}
+    orig = ex._read_file_paginated
+
+    def wrapped(*a, **k):
+        calls["n"] += 1
+        return orig(*a, **k)
+
+    monkeypatch.setattr(ex, "_read_file_paginated", wrapped)
+    args = {"filepath": "dispatcher.py", "offset": 1, "limit": 80}
+    out1 = await execute_file_read(ws, args)
+    # same slice again (model already saw fail-open, still re-reads)
+    out2 = await execute_file_read(ws, dict(args))
+    out3 = await execute_file_read(ws, dict(args))
+    assert out1 == out2 == out3
+    assert calls["n"] == 1
+    # different offset is a new page — not a cache hit
+    await execute_file_read(ws, {"filepath": "dispatcher.py", "offset": 81, "limit": 80})
+    assert calls["n"] == 2
     _file_read_cache_clear()
 
 

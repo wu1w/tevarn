@@ -309,6 +309,39 @@ class RunRecorder:
         elif self._token_used_source == "provider":
             self._token_used_source = "partial"
 
+    def apply_process_ledger(self, process_id: str | None = None) -> None:
+        """Copy provider-real usage from usage_ledger.by_process onto this run.
+
+        Live packed runs already wrote prompt/completion into
+        ``~/.tevarn/data/usage_ledger.json`` while ``agent_runs.token_used``
+        stayed 0 (kernel snapshot copy). Only prompt+completion are used —
+        estimated rounds store ``tokens`` with prompt=completion=0.
+        """
+        pid = (process_id or self.kernel_process_id or "").strip()
+        if not pid or pid == "system":
+            return
+        try:
+            from backend.services.usage_ledger import process_cost
+
+            bucket = process_cost(pid)
+        except Exception:
+            return
+        if not bucket:
+            return
+        try:
+            prompt = int(bucket.get("prompt") or 0)
+            completion = int(bucket.get("completion") or 0)
+        except (TypeError, ValueError):
+            return
+        if prompt <= 0 and completion <= 0:
+            return
+        n = prompt + completion
+        self._token_used = max(int(self._token_used or 0), n)
+        if self._token_used_source in (None, "omitted"):
+            self._token_used_source = "provider"
+        elif self._token_used_source == "partial":
+            self._token_used_source = "provider"
+
     def _token_meta(self) -> dict[str, Any]:
         meta = dict(self.meta or {})
         if self._token_used_source:
@@ -335,6 +368,7 @@ class RunRecorder:
             return
         try:
             repo = await self._repo()
+            self.apply_process_ledger()
             data: dict[str, Any] = {
                 "status": dst.value,
                 "ended_at": _utcnow(),
