@@ -2356,6 +2356,7 @@ _GLOB_SKIP_DIR_NAMES = frozenset({
 })
 _GLOB_MAX_FILES = 80
 _GLOB_MAX_CHARS = 12_000
+_GLOB_BRACE_MAX_EXPANSIONS = 64
 _GREP_MAX_MATCHES = 80
 _GREP_MAX_CHARS = 12_000
 _GREP_MAX_FILES_SCAN = 2_000
@@ -2364,6 +2365,229 @@ _GREP_MAX_FILES_SCAN = 2_000
 def _path_has_skipped_segment(path: str) -> bool:
     parts = path.replace("\\", "/").split("/")
     return any(p in _GLOB_SKIP_DIR_NAMES for p in parts)
+
+
+def _normalize_glob_pattern(pattern: str) -> str:
+    """Treat Windows and mixed separators as path seps, not literal characters."""
+    return pattern.replace("\\", "/")
+
+
+def _glob_pattern_is_absolute(pattern: str) -> bool:
+    if os.path.isabs(pattern):
+        return True
+    return len(pattern) >= 3 and pattern[1] == ":" and pattern[2] in "\\/"
+
+
+def _split_brace_alternatives(inner: str) -> list[str] | None:
+    """Split `{a,b,{c,d}}` body into depth-0 comma alternatives.
+
+    Returns None when there is no comma at depth 0 (bash: `{ts}` is literal).
+    """
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    found_comma = False
+    for i, ch in enumerate(inner):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif ch == "," and depth == 0:
+            parts.append(inner[start:i])
+            start = i + 1
+            found_comma = True
+    if not found_comma:
+        return None
+    parts.append(inner[start:])
+    return parts
+
+
+def _expand_glob_brace_sets(
+    pattern: str, *, max_exp: int = _GLOB_BRACE_MAX_EXPANSIONS
+) -> list[str]:
+    """Expand bash-style `{a,b,c}` sets. stdlib glob.glob does not.
+
+    Coding agents commonly emit `**/*.{ts,js,py}`; without expansion that
+    looks for a literal `.{ts,js,py}` suffix and matches nothing.
+    """
+    out: list[str] = []
+
+    def rec(prefix: str, rest: str) -> None:
+        if len(out) > max_exp:
+            raise ValueError(
+                f"brace set expanded to more than {max_exp} patterns; narrow the glob"
+            )
+        i = 0
+        n = len(rest)
+        while i < n:
+            if rest[i] != "{":
+                i += 1
+                continue
+            depth = 1
+            j = i + 1
+            while j < n and depth:
+                if rest[j] == "{":
+                    depth += 1
+                elif rest[j] == "}":
+                    depth -= 1
+                j += 1
+            if depth != 0:
+                break
+            alts = _split_brace_alternatives(rest[i + 1 : j - 1])
+            if alts is None:
+                i += 1
+                continue
+            head = prefix + rest[:i]
+            tail = rest[j:]
+            for alt in alts:
+                rec(head, alt + tail)
+            return
+        out.append(prefix + rest)
+        if len(out) > max_exp:
+            raise ValueError(
+                f"brace set expanded to more than {max_exp} patterns; narrow the glob"
+            )
+
+    rec("", pattern)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq or [pattern]
+
+
+def _glob_literal_prefix(pattern: str) -> str:
+    """Static directory prefix before the first glob magic (`* ? [`)."""
+    parts: list[str] = []
+    for part in pattern.split("/"):
+        if any(ch in part for ch in "*?["):
+            break
+        parts.append(part)
+    return "/".join(parts)
+
+
+def _glob_pattern_to_regex_str(pattern: str) -> str:
+    """Translate a `/`-separated glob (with `**`) to a fullmatch regex body."""
+    out: list[str] = ["^"]
+    i = 0
+    n = len(pattern)
+    while i < n:
+        if pattern.startswith("**", i):
+            nxt = i + 2
+            if nxt < n and pattern[nxt] == "/":
+                # **/ → zero or more directories (stdlib glob: **/*.py hits root files)
+                out.append("(?:.+/)?")
+                i = nxt + 1
+            else:
+                out.append(".*")
+                i = nxt
+            continue
+        ch = pattern[i]
+        if ch == "*":
+            out.append("[^/]*")
+        elif ch == "?":
+            out.append("[^/]")
+        else:
+            out.append(re.escape(ch))
+        i += 1
+    out.append("$")
+    return "".join(out)
+
+
+def _compile_glob_regexes(patterns: list[str]) -> list[re.Pattern[str]]:
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    return [re.compile(_glob_pattern_to_regex_str(p), flags) for p in patterns]
+
+
+def _minimal_dir_prefixes(prefixes: list[str]) -> list[str]:
+    ordered = sorted(set(prefixes), key=lambda p: (p.count("/"), len(p), p))
+    kept: list[str] = []
+    for p in ordered:
+        if any(p == o or p.startswith(o + "/") for o in kept):
+            continue
+        kept.append(p)
+    return kept
+
+
+def _glob_collect_many(
+    base_abs: str,
+    patterns: list[str],
+    *,
+    include_heavy: bool,
+) -> list[str]:
+    """One pruned walk covering all brace expansions (not one walk per suffix)."""
+    abs_pats = [p for p in patterns if _glob_pattern_is_absolute(p)]
+    rel_pats = [p for p in patterns if p not in abs_pats]
+    hits: list[str] = []
+    seen: set[str] = set()
+
+    def _add(path: str) -> None:
+        ap = os.path.abspath(path)
+        if ap not in seen:
+            seen.add(ap)
+            hits.append(path)
+
+    for pat in abs_pats:
+        for m in glob.glob(pat, recursive=True):
+            _add(m)
+
+    if not rel_pats:
+        return hits
+
+    regexes = _compile_glob_regexes(rel_pats)
+    recursive = any("**" in p for p in rel_pats)
+    prefixes = [_glob_literal_prefix(p) for p in rel_pats]
+    if any(p == "" for p in prefixes):
+        walk_roots = [""]
+    else:
+        walk_roots = _minimal_dir_prefixes(prefixes)
+
+    for pref in walk_roots:
+        root = os.path.join(base_abs, pref.replace("/", os.sep)) if pref else base_abs
+        if os.path.isfile(root):
+            rel = pref if pref else os.path.basename(root)
+            if any(rx.match(rel.replace("\\", "/")) for rx in regexes):
+                _add(root)
+            continue
+        if not os.path.isdir(root):
+            continue
+        if not recursive:
+            try:
+                names = os.listdir(root)
+            except OSError:
+                continue
+            for name in names:
+                if not include_heavy and name in _GLOB_SKIP_DIR_NAMES:
+                    continue
+                if name.startswith("."):
+                    continue
+                fp = os.path.join(root, name)
+                if not os.path.isfile(fp):
+                    continue
+                rel = f"{pref}/{name}" if pref else name
+                if any(rx.match(rel) for rx in regexes):
+                    _add(fp)
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            if not include_heavy:
+                dirnames[:] = [d for d in dirnames if d not in _GLOB_SKIP_DIR_NAMES]
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            rel_dir = os.path.relpath(dirpath, base_abs)
+            if rel_dir == ".":
+                rel_dir = ""
+            else:
+                rel_dir = rel_dir.replace("\\", "/")
+            for name in filenames:
+                if name.startswith("."):
+                    continue
+                rel = f"{rel_dir}/{name}" if rel_dir else name
+                if any(rx.match(rel) for rx in regexes):
+                    _add(os.path.join(dirpath, name))
+    return hits
 
 
 async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str:
@@ -2382,7 +2606,11 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
     if ".." in pattern:
         return "[Security Blocked] Pattern cannot contain '..'"
 
-    search_path = os.path.join(base_abs, pattern)
+    try:
+        expanded = _expand_glob_brace_sets(_normalize_glob_pattern(pattern))
+    except ValueError as e:
+        return f"[Error] {e}"
+
     include_heavy = bool(arguments.get("include_heavy") or arguments.get("all"))
     # Hard cap: recursive ** globs over huge trees (node_modules etc. already
     # filtered, but scan itself can block 20s+ and stress the process before
@@ -2394,7 +2622,9 @@ async def execute_glob(config: dict[str, Any], arguments: dict[str, Any]) -> str
     _glob_timeout = max(3.0, min(_glob_timeout, 60.0))
 
     def _scan() -> str:
-        matches = glob.glob(search_path, recursive=True)
+        matches = _glob_collect_many(
+            base_abs, expanded, include_heavy=include_heavy
+        )
         rel_matches: list[str] = []
         skipped_heavy = 0
         for m in sorted(matches):
