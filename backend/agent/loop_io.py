@@ -522,6 +522,12 @@ class LoopIOMixin:
     ) -> None:
         """原子化保存最终回复：Message + CtxItem + Session 状态 + 通知"""
         text = (final_content or "").strip()
+        try:
+            from backend.agent.user_channel import user_visible_content
+
+            text = user_visible_content(text)
+        except Exception:
+            pass
         if not text:
             text = (
                 "（本轮未生成可见正文：可能只调用了工具且后续未总结。"

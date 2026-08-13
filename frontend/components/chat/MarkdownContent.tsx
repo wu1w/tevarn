@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseMessageContent } from '@/lib/parseMessageContent';
-import { ThinkingBlock } from './ThinkingBlock';
 import { FileDownloadLink, isWorkspaceFileLink } from './FileDownloadLink';
 import { useT } from '@/stores/localeStore';
 
@@ -37,12 +36,15 @@ export function MarkdownContent({
   const isErr =
     /^\[(?:LLM )?Error/i.test((content || '').trim()) ||
     /^Error:/i.test((content || '').trim());
-  const { thinking, body, thinkingOpen } = useMemo(
-    () => (isErr ? { thinking: null, body: content || '', thinkingOpen: false } : parseMessageContent(content)),
+  const { thinking, body } = useMemo(
+    () => (isErr ? { thinking: null, body: content || '' } : parseMessageContent(content)),
     [content, isErr]
   );
 
   const displayBody = body || (!thinking ? content : '');
+
+  // Thinking / CoT is not a user-visible channel (backend strips it on persist;
+  // parseMessageContent still removes leftover tags so they never render as text).
 
   // audit-fix: react-markdown v10 不转发自定义 prop（streaming 传不到 CodeRenderer，
   // 导致 MermaidBlock 永远按非流式渲染）——改用闭包注入；并用 useMemo 缓存
@@ -116,13 +118,6 @@ export function MarkdownContent({
 
     return (
       <div className={isUser ? 'text-foreground' : ''}>
-        {(thinking || (streaming && thinkingOpen)) && (
-          <ThinkingBlock
-            content={thinking || ''}
-            streaming={streaming && (thinkingOpen || !displayBody)}
-            defaultOpen={streaming && thinkingOpen}
-          />
-        )}
         {displayBody ? (
           <div className={`chat-md max-w-none ${isUser ? 'text-foreground' : ''}`}>
             <ReactMarkdown
@@ -133,9 +128,9 @@ export function MarkdownContent({
               {displayBody}
             </ReactMarkdown>
           </div>
-        ) : !thinking && !thinkingOpen ? (
+        ) : streaming ? (
           <span className="italic text-foreground-dim">
-            {streaming ? t('chat.thinking') : ''}
+            {t('chat.thinking')}
           </span>
         ) : null}
       </div>

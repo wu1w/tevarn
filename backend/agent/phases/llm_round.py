@@ -50,6 +50,42 @@ def _msg_chars(m: dict[str, Any]) -> int:
     return len(str(c))
 
 
+async def _retract_pretool_user_stream(
+    loop: Any,
+    *,
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
+    accumulated_content: str,
+) -> None:
+    """Hide streamed pre-tool essays once the model starts calling tools."""
+    try:
+        from backend.agent.user_channel import content_for_chat_persist
+
+        shown = content_for_chat_persist(accumulated_content, has_tool_calls=True)
+    except Exception:
+        shown = ""
+    try:
+        ws = getattr(loop, "ws_manager", None)
+        if ws is None:
+            return
+        await ws.broadcast(
+            session_id,
+            {
+                "type": "content_reset",
+                "reason": "pretool_retract",
+                "content": shown,
+                "message_id": str(
+                    message_id
+                    or getattr(loop, "_stream_message_id", None)
+                    or ""
+                )
+                or None,
+            },
+        )
+    except Exception as _cr_e:
+        logger.debug("pretool content_reset skip: %s", _cr_e)
+
+
 async def run_llm_round(
     loop: Any,
     *,
@@ -146,15 +182,12 @@ async def _run_llm_round_body(
     accumulated_content = ""
     accumulated_reasoning = ""
     tool_calls: list[Any] = []
-    # Stream native reasoning as <thinking>… so frontend ThinkingBlock can render it
-    _think_stream_open = False
-    _think_stream_closed = False
-
-    async def _close_thinking_stream() -> None:
-        nonlocal _think_stream_open, _think_stream_closed
-        if _think_stream_open and not _think_stream_closed:
-            await loop._push_stream(session_id, message_id, "\n</thinking>\n")
-            _think_stream_closed = True
+    # Native reasoning stays off the user WS channel (traces still record it)
+    _pretool_retracted = False
+    try:
+        loop._stream_message_id = message_id
+    except Exception:
+        pass
 
     try:
         logger.info(
@@ -233,40 +266,30 @@ async def _run_llm_round_body(
                 _pending = asyncio.create_task(_ait.__anext__())
                 _last_hb = time.monotonic()  # any chunk resets silence timer
 
-                # 思考链增量 → 前端可折叠思考块（始终推送，不受 suppress_content_stream 影响）
+                # Native reasoning: record for traces / next-turn reasoning_content.
+                # Do NOT push <thinking> onto the user stream.
                 rdelta = getattr(chunk, "reasoning_delta", None) or ""
                 if rdelta:
                     accumulated_reasoning += rdelta
-                    try:
-                        if not _think_stream_open:
-                            await loop._push_stream(
-                                session_id, message_id, "<thinking>\n"
-                            )
-                            _think_stream_open = True
-                        await loop._push_stream(session_id, message_id, str(rdelta))
-                    except Exception as _re:
-                        logger.debug("push reasoning stream skipped: %s", _re)
 
-                # 推送流式正文；若思考块仍开着则先闭合
+                # 推送流式正文（tool 已出现则收回抢答，不再继续推）
                 if chunk.delta:
-                    if _think_stream_open and not _think_stream_closed:
-                        try:
-                            await _close_thinking_stream()
-                        except Exception:
-                            pass
                     accumulated_content += chunk.delta
-                    if not suppress_content_stream:
+                    if not suppress_content_stream and not _pretool_retracted:
                         await loop._push_stream(
                             session_id, message_id, chunk.delta
                         )
 
-                # 收集 tool call（纯 tool 轮也可能只有 reasoning；出 tool 前先闭合思考块）
+                # 收集 tool call：收回已流出的抢答正文
                 if chunk.tool_call:
-                    if _think_stream_open and not _think_stream_closed:
-                        try:
-                            await _close_thinking_stream()
-                        except Exception:
-                            pass
+                    if not _pretool_retracted:
+                        _pretool_retracted = True
+                        await _retract_pretool_user_stream(
+                            loop,
+                            session_id=session_id,
+                            message_id=message_id,
+                            accumulated_content=accumulated_content,
+                        )
                     tool_calls.append(chunk.tool_call)
 
                 # 真实用量（T4）：provider 回填时优先于粗估；合并 partial stream
@@ -286,21 +309,15 @@ async def _run_llm_round_body(
                         err_delta = (chunk.delta or "").strip()
                         body = (accumulated_content or "").strip()
                         if err_delta.startswith("[LLM Error") or not body:
-                            try:
-                                await _close_thinking_stream()
-                            except Exception:
-                                pass
                             accumulated_content = err_delta or (
                                 "[LLM Error] 模型返回失败且无正文。"
                                 "请检查网络/API Key/模型名后重试。"
                             )
                             result.action = "break"
-                            from backend.agent.thinking_format import (
-                                canonicalize_thinking,
-                            )
+                            from backend.agent.user_channel import user_visible_content
 
-                            result.final_content = canonicalize_thinking(
-                                accumulated_reasoning, accumulated_content
+                            result.final_content = user_visible_content(
+                                accumulated_content
                             )
                             result.accumulated_content = accumulated_content
                             result.accumulated_reasoning = accumulated_reasoning
@@ -335,18 +352,12 @@ async def _run_llm_round_body(
                 except Exception:
                     pass
 
-        # 流结束：若仅有 reasoning（或 tool_calls 无正文），闭合思考标签
-        try:
-            await _close_thinking_stream()
-        except Exception:
-            pass
-
         if loop._should_stop:
             result.action = "break"
-            from backend.agent.thinking_format import canonicalize_thinking
+            from backend.agent.user_channel import user_visible_content
 
             result.final_content = (
-                canonicalize_thinking(accumulated_reasoning, accumulated_content)
+                user_visible_content(accumulated_content)
                 or final_content
                 or "[Stopped] Generation was cancelled"
             )

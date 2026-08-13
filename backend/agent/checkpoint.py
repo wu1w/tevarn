@@ -11,6 +11,22 @@ logger = logging.getLogger(__name__)
 CHECKPOINT_KEY = "_agent_checkpoint"
 
 
+def recorder_run_id(recorder: Any) -> str | None:
+    """Run id from a RunRecorder — never treat a reasoning ``str`` as a recorder.
+
+    Live bug: loop reused ``_rc`` for ``accumulated_reasoning``, then
+    ``_rc.run_id`` at the next segment boundary raised
+    ``'str' object has no attribute 'run_id'`` and aborted auto-continue setup.
+    """
+    if recorder is None or isinstance(recorder, (str, bytes, bytearray, int, float)):
+        return None
+    rid = getattr(recorder, "run_id", None)
+    if rid is None:
+        return None
+    s = str(rid).strip()
+    return s or None
+
+
 async def save_checkpoint(
     session_id: uuid.UUID,
     *,

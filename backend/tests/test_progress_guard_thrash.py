@@ -7,6 +7,7 @@ from backend.agent.progress_guard import (
     classify_cargo_error,
     classify_grep_pattern,
     doom_loop_handoff,
+    ignored_nudge_action,
     is_cargo_compile_failure,
     is_deliver_allowed_command,
     is_deliver_allowed_grep,
@@ -63,6 +64,29 @@ def test_cargo_error_class_source_vs_path():
     stub = "error: only metadata stub found for `rlib` dependency `core`"
     assert classify_cargo_error(stub) == "toolchain"
     assert is_cargo_compile_failure(stub) is False
+
+
+def test_ignored_nudge_action_no_write_then_force():
+    """Live: no_write nudge every even round 6–24; must force, not spam."""
+    kw = {"first_at": 6, "grace": 4, "even_only": True}
+    assert ignored_nudge_action(current=5, **kw) == "none"
+    assert ignored_nudge_action(current=6, **kw) == "nudge"
+    assert ignored_nudge_action(current=7, **kw) == "none"
+    assert ignored_nudge_action(current=8, **kw) == "nudge"
+    assert ignored_nudge_action(current=10, **kw) == "force_final"
+    assert ignored_nudge_action(current=24, **kw) == "force_final"
+
+
+def test_ignored_nudge_action_converge_then_force():
+    """Live: converge@16 then 9 more ignored rounds to 25/30."""
+    kw = {"first_at": 16, "grace": 2, "every": 10}
+    assert ignored_nudge_action(current=15, **kw) == "none"
+    assert ignored_nudge_action(current=16, **kw) == "nudge"
+    assert ignored_nudge_action(current=17, **kw) == "none"
+    assert ignored_nudge_action(current=18, **kw) == "force_final"
+    assert ignored_nudge_action(current=25, **kw) == "force_final"
+    # Old every=10 without force would still be 'none' at 25 (next nudge at 26)
+    assert ignored_nudge_action(current=25, first_at=16, grace=99, every=10) == "none"
 
 
 def test_review_only_and_deliver_arm():

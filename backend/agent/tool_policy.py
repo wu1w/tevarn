@@ -315,6 +315,8 @@ _PACK_KEYWORDS: dict[str, tuple[str, ...]] = {
         ".ts",
         "git ",
         "commit",
+        "github.com/",
+        "code review",
     ),
     "goal": (
         "长期任务",
@@ -380,6 +382,9 @@ _CODING_FORCE_HINTS = (
     "报错", "编译", "单元测试", "文件", "目录", "仓库", "repo", "commit", "git ",
     "cargo", "npm ", "python ", "函数", "class ", "patch", "apply_patch",
     "读一下", "打开文件", "编辑", " bug", "bug ",
+    "github.com/", "gitlab.com/", "gitee.com/",
+    "代码审查", "审查代码", "逻辑bug", "逻辑 bug", "逻辑问题",
+    "review this repo", "review the repo", "code review",
 )
 _SEARCH_ONLY_HINTS = (
     "搜一下", "搜索一下", "帮我搜", "联网搜", "查一下新闻", "search for", "google ",
@@ -583,6 +588,37 @@ def _order_tools(names: set[str]) -> list[str]:
 
 
 
+_REPO_URL_RE = re.compile(
+    r"https?://(?:www\.)?(?:github|gitlab|gitee)\.com/[\w.-]+/[\w.-]+",
+    re.I,
+)
+_REPO_REVIEW_RE = re.compile(
+    r"(?i)(审查|评审|审计|review).{0,24}(仓库|repo|项目|代码|源码)|"
+    r"(仓库|repo|项目|代码|源码).{0,16}(审查|评审|逻辑)|"
+    r"review\s+(this|the)\s+(repo|project|code)|"
+    r"logic\s+bugs?",
+)
+
+
+def looks_like_repo_task(user_input: str) -> bool:
+    """GitHub/GitLab URL or explicit repo/code review — not casual Q&A."""
+    text = (user_input or "").strip()
+    if not text:
+        return False
+    if _REPO_URL_RE.search(text):
+        return True
+    if _REPO_REVIEW_RE.search(text):
+        return True
+    try:
+        from backend.agent.task_grounding import is_audit_like_task
+
+        if is_audit_like_task(text):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def is_thin_chat_intent(user_input: str) -> bool:
     text = (user_input or "").strip()
     if not text:
@@ -590,6 +626,8 @@ def is_thin_chat_intent(user_input: str) -> bool:
     if len(text) > 280:
         return False
     low = text.lower()
+    if looks_like_repo_task(text):
+        return False
     if any(h in low or h in text for h in _CODING_FORCE_HINTS):
         return False
     if _PURE_SEARCH_VERBS.search(text) or any(h in low or h in text for h in _SEARCH_ONLY_HINTS):
@@ -775,6 +813,15 @@ def infer_scene(
             packs = [p for p in packs if p != "web"]
             reasons.append("coding_no_web")
 
+    # GitHub/GitLab 仓库审查：coding 优先，不要只挂 web 导致先瞎编再 use_tool_pack
+    if looks_like_repo_task(text):
+        if "coding" not in packs:
+            packs.append("coding")
+            reasons.append("repo_review")
+        if "web" in packs and not is_search_only_intent(text):
+            packs = [p for p in packs if p != "web"]
+            reasons.append("repo_review:no_web")
+
     # 无 pack 的 dynamic 默认：coding（不挂 web），对齐工程主脑
     if not packs:
         packs = ["coding"]
@@ -846,9 +893,9 @@ def resolve_enabled_tool_names(
                 for k in (
                     "代码", "bug", "修复", "refactor", "pytest", "编译", "报错",
                     "traceback", ".py", ".ts", "git ", "commit", "实现", "函数",
-                    "file", "edit", "patch",
+                    "file", "edit", "patch", "github.com/",
                 )
-            ):
+            ) or looks_like_repo_task(user_input):
                 plan.packs = list(plan.packs) + ["coding"]
                 plan.reasons = list(plan.reasons) + ["intent_preload:coding_kw"]
     except Exception:
@@ -1079,7 +1126,8 @@ def compact_capability_brief(
             "Coding surface: read → edit/apply_patch/file_write"
             + (" → command/python verify" if cmd_listed else "")
             + ". Prefer one coherent multi-hunk patch over many tiny edits. "
-            "Batch independent reads. After fix/build, verify before claiming done."
+            "Batch independent reads. Do not invent a project description before "
+            "reading files. After fix/build, verify before claiming done."
         )
         if cmd_listed:
             lines.append(

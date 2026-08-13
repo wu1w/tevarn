@@ -497,6 +497,11 @@ class Settings(BaseSettings):
     agent_soft_open_goal_only: bool = False
     agent_converge_nudge_after: int = 16  # soft 「注意收束」after N tool rounds
     agent_converge_nudge_every: int = 10  # re-nudge interval after first
+    # After the first converge nudge, force_final if still tooling (do not wait
+    # another 10 rounds — live: nudge@16 then ran to 25/30).
+    agent_converge_force_after: int = 2
+    # After the first no_write nudge, force_final if still no writes.
+    agent_no_write_force_after: int = 4
     agent_pure_read_nudge_after: int = 4  # pure-read rounds before soft write nudge
     agent_pure_read_deliver_after: int = 99  # soft-open: never strip tools (was 4)
     agent_manage_goal_cadence_rounds: int = 12  # soft-open: rare goal bookkeeping nudge

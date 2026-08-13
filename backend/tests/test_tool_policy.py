@@ -209,3 +209,21 @@ def test_profile_assistant_has_session_search():
     names, _ = resolve_enabled_tool_names(profile="assistant", user_input="x")
     assert names is not None
     assert "session_search" in names
+
+
+def test_repo_review_url_is_coding_not_thin_chat():
+    from backend.agent.tool_policy import is_thin_chat_intent, looks_like_repo_task
+
+    q = "帮我审查 https://github.com/wu1w/tevarn 的逻辑 bug"
+    assert looks_like_repo_task(q) is True
+    assert is_thin_chat_intent(q) is False
+    names, plan = resolve_enabled_tool_names(
+        mode="default", profile="dynamic", user_input=q
+    )
+    assert names is not None
+    assert "file_read" in names
+    assert "coding" in plan.packs
+    assert is_thin_chat_intent("在吗") is True
+    assert is_thin_chat_intent("你好") is True
+    # trending github is still casual, not a repo URL review
+    assert looks_like_repo_task("查一下 github 的热门项目") is False
