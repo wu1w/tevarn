@@ -509,6 +509,15 @@ async def _run_llm_round_body(
     except Exception as _cost_e:
         logger.warning("cost_charge skip: %s", _cost_e)
 
+    # agent_runs.token_used: provider usage only. Kernel charge is a separate
+    # budget snapshot and is often 0 (token_budget is None, or a stale copy).
+    try:
+        rec = getattr(loop, "_run_recorder", None)
+        if rec is not None and hasattr(rec, "note_llm_round_usage"):
+            rec.note_llm_round_usage(stream_usage if stream_usage else None)
+    except Exception as _tu_e:
+        logger.debug("run token_used skip: %s", _tu_e)
+
     if kernel_proc is not None and kernel_proc.token_budget is not None:
         from backend.kernel import BudgetExceededError, get_kernel
 

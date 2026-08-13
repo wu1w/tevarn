@@ -9,6 +9,8 @@
 import pytest
 
 from backend.services.tools.executors import (
+    FILE_READ_DEFAULT_LIMIT,
+    _file_read_cache_clear,
     _file_read_char_budget,
     execute_edit,
     execute_file_read,
@@ -239,3 +241,64 @@ async def test_file_read_pagination_arg_contract(ws, tmp_path):
 async def test_file_read_path_traversal_still_blocked(ws, tmp_path):
     out = await execute_file_read(ws, {"filepath": "../../etc/passwd"})
     assert "[Security Blocked]" in out or "[Error]" in out
+
+
+@pytest.mark.asyncio
+async def test_file_read_default_window_fits_a_module(ws, tmp_path):
+    """Default omit-limit read must cover a typical module, not 80–200 line slices."""
+    n = 800
+    _write(tmp_path, "mod.py", "".join(f"def f{i}():\n    return {i}\n" for i in range(n)))
+    # 800 funcs × 2 lines = 1600 lines, under default 2000
+    out = await execute_file_read(ws, {"filepath": "mod.py"})
+    assert "end of file" in out
+    assert "offset=" not in out
+    assert FILE_READ_DEFAULT_LIMIT >= 2000
+    assert _file_read_char_budget() >= 80_000
+
+
+@pytest.mark.asyncio
+async def test_file_read_schema_default_limit_matches_executor():
+    from backend.tools.builtins.core_tools import FileReadTool
+
+    tool = FileReadTool()
+    lim = tool.parameters["properties"]["limit"]["default"]
+    assert lim == FILE_READ_DEFAULT_LIMIT
+    desc = tool.description or ""
+    assert str(FILE_READ_DEFAULT_LIMIT) in desc
+    assert "offset" in desc.lower() or "续读" in desc
+
+
+@pytest.mark.asyncio
+async def test_file_read_identical_reread_uses_cache(ws, tmp_path, monkeypatch):
+    from backend.services.tools import executors as ex
+
+    _file_read_cache_clear()
+    _write(tmp_path, "a.py", "".join(f"line{i}\n" for i in range(1, 51)))
+    calls = {"n": 0}
+    orig = ex._read_file_paginated
+
+    def wrapped(*a, **k):
+        calls["n"] += 1
+        return orig(*a, **k)
+
+    monkeypatch.setattr(ex, "_read_file_paginated", wrapped)
+    out1 = await execute_file_read(ws, {"filepath": "a.py"})
+    out2 = await execute_file_read(ws, {"filepath": "a.py"})
+    assert out1 == out2
+    assert calls["n"] == 1
+    _write(tmp_path, "a.py", "".join(f"changed{i}\n" for i in range(1, 51)))
+    out3 = await execute_file_read(ws, {"filepath": "a.py"})
+    assert calls["n"] == 2
+    assert "changed1" in out3
+    assert out3 != out1
+    _file_read_cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_file_read_explicit_small_limit_still_honoured(ws, tmp_path):
+    _write(tmp_path, "big.py", "".join(f"line{i}\n" for i in range(1, 501)))
+    out = await execute_file_read(ws, {"filepath": "big.py", "limit": 80})
+    assert "    80\tline80" in out
+    assert "line81" not in out.split("\n\n[")[0]
+    assert "line limit" in out
+    assert "offset=81" in out

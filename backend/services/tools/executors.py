@@ -12,7 +12,9 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import urllib.parse
+from collections import OrderedDict
 from html import unescape
 from pathlib import Path
 from typing import Any
@@ -1515,9 +1517,50 @@ async def _maybe_cargo_stub_retry(
 
 
 # file_read 分页参数（T3）
-FILE_READ_DEFAULT_LIMIT = 1000        # 单次默认行数
-FILE_READ_MAX_CHARS = 20_000          # 单次输出字符上限（按行边界收口）
+# Default window must fit a typical module in one call. A ~11k char cap
+# (old TOOL_RESULT_BUDGET["file_read"]=12k minus footer) stopped after
+# ~250 lines on Tevarn Python files and forced offset+= slice thrash
+# (dispatcher.py ×6, permission_court.py ×6 on a live 2026-08-13 run).
+FILE_READ_DEFAULT_LIMIT = 2000        # 单次默认行数（够读一个中等模块）
+FILE_READ_MAX_CHARS = 96_000          # 单次输出字符上限（按行边界收口）
 FILE_READ_MAX_LINE_CHARS = 2_000      # 单行过长时的截断长度
+FILE_READ_CACHE_MAX = 64              # identical (path, offset, limit, mtime, size) hits
+
+_file_read_cache: OrderedDict[tuple, str] = OrderedDict()
+_file_read_cache_lock = threading.Lock()
+
+
+def _file_read_cache_clear() -> None:
+    """Test helper: drop identical-read cache."""
+    with _file_read_cache_lock:
+        _file_read_cache.clear()
+
+
+def _file_read_cache_key(
+    full_path: str, offset: int, limit: int
+) -> tuple[Any, ...] | None:
+    try:
+        st = os.stat(full_path)
+    except OSError:
+        return None
+    mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000)))
+    return (os.path.normcase(full_path), int(offset), int(limit), mtime_ns, int(st.st_size))
+
+
+def _file_read_cache_get(key: tuple[Any, ...]) -> str | None:
+    with _file_read_cache_lock:
+        val = _file_read_cache.get(key)
+        if val is not None:
+            _file_read_cache.move_to_end(key)
+        return val
+
+
+def _file_read_cache_put(key: tuple[Any, ...], value: str) -> None:
+    with _file_read_cache_lock:
+        _file_read_cache[key] = value
+        _file_read_cache.move_to_end(key)
+        while len(_file_read_cache) > FILE_READ_CACHE_MAX:
+            _file_read_cache.popitem(last=False)
 
 
 def _file_read_char_budget() -> int:
@@ -1671,8 +1714,13 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
         return f"[Error] Not a file: {filepath}"
 
     try:
+        cache_key = _file_read_cache_key(full_path, offset, limit)
+        if cache_key is not None:
+            hit = _file_read_cache_get(cache_key)
+            if hit is not None:
+                return hit
         # 阻塞 I/O 丢进线程，让同轮并发的 tool call 真正并行（T1b）
-        return await asyncio.to_thread(
+        out = await asyncio.to_thread(
             _read_file_paginated,
             full_path,
             filepath,
@@ -1680,6 +1728,15 @@ async def execute_file_read(config: dict[str, Any], arguments: dict[str, Any]) -
             limit,
             _file_read_char_budget(),
         )
+        if (
+            cache_key is not None
+            and isinstance(out, str)
+            and not out.startswith("[Error]")
+            and not out.startswith("[Security")
+            and not out.startswith("[Blocked]")
+        ):
+            _file_read_cache_put(cache_key, out)
+        return out
     except Exception as e:
         return f"[Error] {e}"
 
