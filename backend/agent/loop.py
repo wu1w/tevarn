@@ -1225,6 +1225,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     recorder.kernel_process_id = kernel_proc.id
                 except Exception as _silent_e:
                     logger.debug("suppressed: %s", _silent_e, exc_info=False)
+                try:
+                    _tb = getattr(kernel_proc, "token_budget", None)
+                    if _tb:
+                        recorder.token_limit = int(_tb)
+                except (TypeError, ValueError):
+                    pass
                 # PR1–PR4: configure Rust loop_guard (max rounds / ban worker orch / crew cap)
                 try:
                     if bool(getattr(settings, "agent_loop_guard_enabled", True)):
@@ -1551,8 +1557,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             try:
                 if getattr(self, "last_iterations", None):
                     recorder._iterations = int(self.last_iterations)
-                if kernel_proc is not None:
-                    recorder.set_token_used(int(getattr(kernel_proc, "tokens_used", 0) or 0))
+                # token_used is accrued per LLM round from provider usage
+                # (note_llm_round_usage). Do not copy kernel_proc.tokens_used:
+                # that snapshot stays 0 when token_budget is None or the
+                # client holds a stale copy — which made completed runs look free.
             except Exception as _silent_e:
                 logger.debug("suppressed: %s", _silent_e, exc_info=False)
             _exit = str(getattr(self, "last_exit_reason", "") or "")
@@ -1588,13 +1596,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # P0：CancelledError 是 BaseException；清理段用 shield 防二次 cancel 打断漏槽
             async def _cleanup_cancel() -> None:
                 try:
-                    if kernel_proc is not None:
-                        recorder.set_token_used(
-                            int(getattr(kernel_proc, "tokens_used", 0) or 0)
-                        )
-                except Exception as _silent_e:
-                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
-                try:
                     await recorder.cancel("cancelled")
                 except Exception as _silent_e:
                     logger.debug("suppressed: %s", _silent_e, exc_info=False)
@@ -1609,13 +1610,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # P0 审计 N1：except 退出时 Python 会 del e；shield 内闭包若引用 e 会 NameError → 槽位泄漏
             err_msg = str(e)
             async def _cleanup_fail() -> None:
-                try:
-                    if kernel_proc is not None:
-                        recorder.set_token_used(
-                            int(getattr(kernel_proc, "tokens_used", 0) or 0)
-                        )
-                except Exception as _silent_e:
-                    logger.debug("suppressed: %s", _silent_e, exc_info=False)
                 try:
                     await recorder.finish_fail(err_msg)
                 except Exception as _silent_e:

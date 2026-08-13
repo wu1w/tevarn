@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.services.tools.executors import (
+    FILE_READ_DEFAULT_LIMIT,
     execute_browser,
     execute_command,
     execute_edit,
@@ -98,8 +99,9 @@ class FileReadTool(_BuiltinToolBase):
             name="file_read",
             description=(
                 "读取工作区内文件正文，输出带行号（`行号 TAB 正文`）。改代码/查配置前必须先读再改。"
-                "大文件会在行边界处停止并提示续读的 offset——看到该提示就再调一次补齐，"
-                "不要基于不完整内容改代码。大文件也可先 grep/glob 定位再按 offset 精读。"
+                "默认一次读够一个普通模块（约 2000 行 / 按行边界的大字符窗），不要主动把 limit 设成 80–200。"
+                "省略 limit 即可。只有结果末尾出现续读 footer（offset=N）时才再调一次补齐；"
+                "不要基于不完整内容改代码。超大文件可先 grep/glob 定位再按 footer 的 offset 续读。"
                 "重要：行号是展示前缀，不属于文件内容，写 edit 的 old_text 时不要带上。"
                 "失败时检查路径是否在 workspace 内、文件是否存在。"
             ),
@@ -109,13 +111,19 @@ class FileReadTool(_BuiltinToolBase):
                     "filepath": {"type": "string", "description": "要读取的文件路径"},
                     "offset": {
                         "type": "integer",
-                        "description": "起始行号（1-based），续读大文件时用，默认 1",
+                        "description": (
+                            "起始行号（1-based）。默认 1。"
+                            "仅在上次结果给出续读 footer 或要跳到已知行时使用。"
+                        ),
                         "default": 1,
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "读取行数，默认 1000",
-                        "default": 1000,
+                        "description": (
+                            f"读取行数。默认 {FILE_READ_DEFAULT_LIMIT}，够读一个普通模块；"
+                            "省略此项，勿为「谨慎」而改成几百行。"
+                        ),
+                        "default": FILE_READ_DEFAULT_LIMIT,
                     },
                 },
                 "required": ["filepath"],

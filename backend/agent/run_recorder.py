@@ -57,6 +57,7 @@ class RunRecorder:
         self._tool_calls = 0
         self._iterations = 0
         self._token_used = 0
+        self._token_used_source: str | None = None
 
     # ─────────── 内部工具 ───────────
 
@@ -253,23 +254,99 @@ class RunRecorder:
         try:
             if repo is None:
                 repo = await self._repo()
-            await repo.update_run(
-                self.run_id,
-                {
-                    "total_tool_calls": int(self._tool_calls or 0),
-                    "total_iterations": int(self._iterations or 0),
-                    "token_used": int(self._token_used or 0),
-                },
-            )
+            payload: dict[str, Any] = {
+                "total_tool_calls": int(self._tool_calls or 0),
+                "total_iterations": int(self._iterations or 0),
+                "token_used": int(self._token_used or 0),
+            }
+            if self._token_used_source:
+                payload["meta"] = self._token_meta()
+            await repo.update_run(self.run_id, payload)
         except Exception as e:
             logger.debug("RunRecorder._flush_counters: %s", e)
 
     def set_token_used(self, used: int) -> None:
-        """同步 kernel 进程已用 token（finish 时落库）。"""
+        """Legacy absolute setter. Does not override provider-accrued totals.
+
+        Prefer ``note_llm_round_usage`` — kernel snapshots are often 0
+        (charge skipped when token_budget is None; Rust client returns copies).
+        """
+        if self._token_used_source in ("provider", "partial"):
+            return
         try:
             self._token_used = max(0, int(used or 0))
         except (TypeError, ValueError):
             pass
+
+    def note_llm_round_usage(self, usage: dict[str, Any] | None) -> None:
+        """Accrue provider-reported tokens for this run.
+
+        Empty/missing usage is recorded as ``omitted`` rather than a silent 0
+        that looks like a free run. Estimates are not written here.
+        """
+        try:
+            from backend.services.llm.usage_normalize import finalize_usage
+
+            u = finalize_usage(dict(usage) if isinstance(usage, dict) else {})
+        except Exception:
+            u = dict(usage) if isinstance(usage, dict) else {}
+        try:
+            prompt = int(u.get("prompt_tokens") or 0)
+            completion = int(u.get("completion_tokens") or 0)
+            total = int(u.get("total_tokens") or 0)
+        except (TypeError, ValueError):
+            prompt, completion, total = 0, 0, 0
+        n = total if total > 0 else max(0, prompt + completion)
+        if n > 0:
+            self._token_used = int(self._token_used or 0) + n
+            if self._token_used_source == "omitted":
+                self._token_used_source = "partial"
+            else:
+                self._token_used_source = "provider"
+            return
+        if self._token_used_source is None:
+            self._token_used_source = "omitted"
+        elif self._token_used_source == "provider":
+            self._token_used_source = "partial"
+
+    def apply_process_ledger(self, process_id: str | None = None) -> None:
+        """Copy provider-real usage from usage_ledger.by_process onto this run.
+
+        Live packed runs already wrote prompt/completion into
+        ``~/.tevarn/data/usage_ledger.json`` while ``agent_runs.token_used``
+        stayed 0 (kernel snapshot copy). Only prompt+completion are used —
+        estimated rounds store ``tokens`` with prompt=completion=0.
+        """
+        pid = (process_id or self.kernel_process_id or "").strip()
+        if not pid or pid == "system":
+            return
+        try:
+            from backend.services.usage_ledger import process_cost
+
+            bucket = process_cost(pid)
+        except Exception:
+            return
+        if not bucket:
+            return
+        try:
+            prompt = int(bucket.get("prompt") or 0)
+            completion = int(bucket.get("completion") or 0)
+        except (TypeError, ValueError):
+            return
+        if prompt <= 0 and completion <= 0:
+            return
+        n = prompt + completion
+        self._token_used = max(int(self._token_used or 0), n)
+        if self._token_used_source in (None, "omitted"):
+            self._token_used_source = "provider"
+        elif self._token_used_source == "partial":
+            self._token_used_source = "provider"
+
+    def _token_meta(self) -> dict[str, Any]:
+        meta = dict(self.meta or {})
+        if self._token_used_source:
+            meta["token_used_source"] = self._token_used_source
+        return meta
 
     # ─────────── 终态 ───────────
 
@@ -291,6 +368,7 @@ class RunRecorder:
             return
         try:
             repo = await self._repo()
+            self.apply_process_ledger()
             data: dict[str, Any] = {
                 "status": dst.value,
                 "ended_at": _utcnow(),
@@ -298,6 +376,8 @@ class RunRecorder:
                 "total_iterations": int(self._iterations or 0),
                 "token_used": int(self._token_used or 0),
             }
+            if self._token_used_source:
+                data["meta"] = self._token_meta()
             if self.token_limit:
                 data["token_limit"] = int(self.token_limit)
             if final_summary:

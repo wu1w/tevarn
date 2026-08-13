@@ -566,6 +566,31 @@ def merge_cache_panels(
     }
 
 
+def process_cost(process_id: str | None) -> dict[str, int]:
+    """Provider-real usage for one kernel process (usage_ledger.by_process).
+
+    Empty / missing / the shared ``system`` bucket → {}. Callers must not
+    treat a missing bucket as 0-used.
+    """
+    pid = (process_id or "").strip()
+    if not pid or pid == "system":
+        return {}
+    try:
+        snap = snapshot_cost()
+    except Exception:
+        return {}
+    bucket = (snap.get("by_process") or {}).get(pid)
+    if not isinstance(bucket, dict):
+        return {}
+    out: dict[str, int] = {}
+    for k in ("prompt", "completion", "tokens", "billable", "cache_read", "llm_rounds"):
+        try:
+            out[k] = max(0, int(bucket.get(k) or 0))
+        except (TypeError, ValueError):
+            out[k] = 0
+    return out
+
+
 def reset_for_tests() -> None:
     """Clear in-memory state (tests only)."""
     global _state, _path
