@@ -7,6 +7,8 @@ returned "No files matched." while `**/package.json` and
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from backend.services.tools.executors import (
     _GLOB_MAX_CHARS,
     _GLOB_MAX_FILES,
     _expand_glob_brace_sets,
+    _glob_pattern_to_regex_str,
     execute_glob,
 )
 
@@ -76,6 +79,20 @@ def test_expand_glob_brace_sets_suffix_alts():
 def test_expand_glob_brace_sets_caps_wide_product():
     with pytest.raises(ValueError, match="more than"):
         _expand_glob_brace_sets("{a,b,c,d,e,f,g,h}{a,b,c,d,e,f,g,h}{a,b}")
+
+
+def test_glob_pattern_to_regex_starstar_zero_dirs():
+    rx = re.compile(_glob_pattern_to_regex_str("**/*.py"))
+    assert rx.match("app.py")
+    assert rx.match("tevarn-src/backend/app.py")
+    assert not rx.match("app.ts")
+    rx_seg = re.compile(_glob_pattern_to_regex_str("*.py"))
+    assert rx_seg.match("app.py")
+    assert not rx_seg.match("tevarn-src/app.py")
+    rx_pref = re.compile(_glob_pattern_to_regex_str("tevarn-src/backend/**/*.py"))
+    assert rx_pref.match("tevarn-src/backend/app.py")
+    assert rx_pref.match("tevarn-src/backend/pkg/mod.py")
+    assert not rx_pref.match("tevarn-src/frontend/app.py")
 
 
 # ── execute_glob ─────────────────────────────────────────────────────
@@ -195,3 +212,38 @@ async def test_glob_sandbox_root_excludes_outside_files(tmp_path: Path):
     assert "secret.py" not in abs_out
     blocked = await execute_glob(cfg, {"pattern": "../outside/**/*.py"})
     assert blocked.startswith("[Security Blocked]")
+
+
+@pytest.mark.asyncio
+async def test_glob_starstar_finds_root_and_nested_clone_without_prefix(
+    tmp_path: Path,
+):
+    """After clone, **/*.py hits workspace-root and tevarn-src/ without a prefix."""
+    _write(tmp_path / "root.py")
+    ws = _nested_clone_workspace(tmp_path)
+    cfg = {"base_path": str(ws)}
+    paths = _glob_relpaths(await execute_glob(cfg, {"pattern": "**/*.py"}))
+    assert "root.py" in paths
+    assert "tevarn-src/backend/app.py" in paths
+    assert not any(_norm(p).startswith(".computers/") for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_glob_brace_single_walk_not_per_suffix(tmp_path: Path, monkeypatch):
+    """Brace sets must not walk the tree once per {ts,js,py,...} member."""
+    ws = _nested_clone_workspace(tmp_path)
+    walks = {"n": 0}
+    real_walk = os.walk
+
+    def _count_walk(*args, **kwargs):
+        walks["n"] += 1
+        yield from real_walk(*args, **kwargs)
+
+    monkeypatch.setattr(os, "walk", _count_walk)
+    out = await execute_glob(
+        {"base_path": str(ws)}, {"pattern": "**/*.{ts,js,py,go,rs}"}
+    )
+    assert walks["n"] == 1
+    paths = _glob_relpaths(out)
+    assert "tevarn-src/backend/app.py" in paths
+    assert "tevarn-src/frontend/index.ts" in paths
