@@ -1,4 +1,5 @@
 from backend.core.config import get_tevarn_home
+
 """
 冒烟测试专用路由
 提供同步 HTTP 接口，方便后端直接调用模拟用户对话，

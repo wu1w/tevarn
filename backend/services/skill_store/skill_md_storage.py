@@ -9,8 +9,6 @@ SKILL.md 下载与本地存储服务
 
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import logging
 import os
 import re
@@ -18,6 +16,7 @@ from pathlib import Path
 
 import aiohttp
 
+from backend.core.config import get_tevarn_home
 from backend.schemas.skill_store import UnifiedSkill
 
 logger = logging.getLogger(__name__)

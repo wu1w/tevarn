@@ -3884,8 +3884,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 enabled_tools_filter = _tr_state.enabled_tools_filter
                 # P0: MCP reload mid-run → rebuild LLM tool schemas from registry
                 try:
-                    from backend.mcp_hub.service import tools_dirty_generation
                     from backend.agent.tool_policy import live_mcp_tool_names
+                    from backend.mcp_hub.service import tools_dirty_generation
 
                     _mcp_gen = tools_dirty_generation()
                     if _mcp_gen > int(getattr(self, "_mcp_tools_gen", 0) or 0):

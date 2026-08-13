@@ -14,14 +14,14 @@ Privacy (P2):
 """
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import json
 import logging
 import os
 import time
 from pathlib import Path
 from typing import Any
+
+from backend.core.config import get_tevarn_home
 
 logger = logging.getLogger(__name__)
 

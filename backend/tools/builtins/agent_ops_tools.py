@@ -1,8 +1,6 @@
 """P0–P2 运维向工具：终端会话、远程引导、委派、clarify、session_search、apply_patch。"""
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import asyncio
 import json
 import logging
@@ -11,6 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from backend.core.config import get_tevarn_home
 from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 logger = logging.getLogger(__name__)

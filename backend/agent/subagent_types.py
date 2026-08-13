@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import logging
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
@@ -116,8 +115,6 @@ async def run_typed_subagent(
 
     if want_wt and bool(getattr(settings, "agent_worktree_enabled", True)):
         try:
-            from pathlib import Path
-
             from backend.project.worktree import add_worktree, find_git_root
             from backend.tools.permissions import resolve_agent_workspace_root
 

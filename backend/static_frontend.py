@@ -106,8 +106,7 @@ def _static_version_info(root: Path) -> dict:
             reason = f"legacy_alpha:{found}"
         elif found and prod:
             try:
-                fp = tuple(int(x) for x in found.split(".")[:2] if x.isdigit() or x.replace(".","").isdigit() or True)
-                # simpler string compare major.minor
+                # Compare major.minor only (0.4.2 vs 0.5.4-alpha already handled above)
                 fmm = ".".join(found.split(".")[:2])
                 pmm = ".".join(prod.split(".")[:2])
                 if fmm and pmm and fmm != pmm:
