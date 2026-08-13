@@ -1,8 +1,9 @@
 """Reasoning / thinking presentation helpers.
 
-Provider-native reasoning_content (Grok, DeepSeek, o-series, …) is streamed and
-persisted as <thinking>…</thinking> so the existing frontend ThinkingBlock /
-parseMessageContent path can render a collapsible block like Claude / Codex.
+Provider-native ``reasoning_content`` stays off the user channel (WS + chat
+persist). ``wrap_thinking`` still exists for traces / tests / history reload of
+older rows that stored CoT inside ``<thinking>`` tags. User-visible persist
+uses ``user_channel.user_visible_content`` (strip, never re-wrap).
 
 Also: force_final scare-report sanitizers so auto-resume history does not keep
 replaying long 「强制收束」status inventories into the next run context.
@@ -205,10 +206,6 @@ def sanitize_force_final_body(
     if not raw.strip():
         return raw
 
-    thinking = ""
-    m = _THINK_BLOCK_RE.search(raw)
-    if m and m.start() < 80:
-        thinking = m.group(0).strip()
     body = strip_thinking(raw)
 
     # Structured / long user-facing content always kept (plans, reports, code)
@@ -225,8 +222,7 @@ def sanitize_force_final_body(
     else:
         out = body
 
-    if thinking:
-        return f"{thinking}\n\n{out}".strip() if out else thinking
+    # User channel: never re-attach <thinking> onto chat content.
     return out
 
 
@@ -455,16 +451,9 @@ def ensure_user_facing_final(
     # Any non-empty model text wins — including short plans and mid-length answers.
     # Do not treat stock handoff as empty either: keep it rather than inventing excerpts.
     if body.strip():
-        return raw
-    # Truly empty final only
-    thinking = ""
-    m = _THINK_BLOCK_RE.search(raw)
-    if m and m.start() < 80:
-        thinking = m.group(0).strip()
-    handoff = short_segment_handoff_message(goal_mode=goal_mode)
-    if thinking:
-        return f"{thinking}\n\n{handoff}".strip()
-    return handoff
+        return body
+    # Truly empty final only — no thinking tags on the user channel
+    return short_segment_handoff_message(goal_mode=goal_mode)
 
 
 def strip_force_final_scare_for_context(text: Optional[str]) -> str:

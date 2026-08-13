@@ -169,6 +169,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._thrash_force_final_override = None
         self._pseudo_tool_leak_streak = 0
         self._terminal_event_emitted = False
+        self._last_complete_visible = ""
         try:
             from backend.mcp_hub.service import tools_dirty_generation
 
@@ -3575,6 +3576,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 break
 
             message_id = uuid.uuid4()
+            try:
+                self._stream_message_id = message_id
+            except Exception:
+                pass
             logger.info(
                 f"Iteration {iteration + 1}/{_seg_size} (seg {_segment + 1}, global {_global_iter + 1}/{_total_iters}) for session {session_id}"
             )
@@ -3641,6 +3646,35 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             accumulated_content = _lr.accumulated_content
             accumulated_reasoning = getattr(_lr, "accumulated_reasoning", "") or ""
             tool_calls = _lr.tool_calls
+            try:
+                from backend.agent.user_channel import (
+                    looks_like_complete_final_answer,
+                    should_stop_wrapup_redraft,
+                    user_visible_content,
+                )
+
+                _visible_now = user_visible_content(accumulated_content)
+                if tool_calls and should_stop_wrapup_redraft(
+                    current=_visible_now,
+                    previous=getattr(self, "_last_complete_visible", "") or "",
+                    tool_rounds=int(_tool_rounds or 0),
+                ):
+                    logger.info(
+                        "wrap-up dedup: complete answer already produced — "
+                        "skip extra tools session=%s rounds=%s",
+                        session_id,
+                        _tool_rounds,
+                    )
+                    tool_calls = []
+                    accumulated_content = _visible_now
+                    try:
+                        self.last_exit_reason = "complete_answer_dedup"
+                    except Exception:
+                        pass
+                elif looks_like_complete_final_answer(_visible_now):
+                    self._last_complete_visible = _visible_now
+            except Exception as _wu_e:
+                logger.debug("wrap-up dedup skip: %s", _wu_e)
             if _lr.force_final_no_tools is not None:
                 _force_final_no_tools = _lr.force_final_no_tools
             # audit-fix(#13)：Goal 停滞检测（保守：仅 goal 模式、仅计数不重构流程）
@@ -3712,13 +3746,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 continue
             if _lr.action == "break":
                 from backend.agent.thinking_format import (
-                    canonicalize_thinking,
                     ensure_user_facing_final,
                     sanitize_force_final_body,
                 )
+                from backend.agent.user_channel import user_visible_content
 
-                final_content = canonicalize_thinking(
-                    accumulated_reasoning, _lr.final_content or accumulated_content
+                final_content = user_visible_content(
+                    _lr.final_content or accumulated_content
                 )
                 if _force_final_no_tools:
                     # Keep real user summaries; only collapse scare inventories.
@@ -3760,11 +3794,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             if tool_calls:
                 # 将 assistant 的回复（含 tool calls）追加到 messages
                 # content 用 None 兼容部分严格 API（空字符串 + tool_calls 会被拒）
-                # LLM 上下文只带可见正文；UI 持久化可附带 <thinking>
+                # LLM 上下文：可见正文 + 独立 reasoning_content；UI 持久化不含 <thinking>
                 # DeepSeek V4 thinking+tools：必须回传 reasoning_content（见官方 thinking_mode 文档）
+                # Gemini：tool_call_to_openai_message 保留 thought_signature / extra_content
+                from backend.agent.user_channel import content_for_chat_persist
+                from backend.agent.user_channel import user_visible_content as _uvc_llm
+
+                _llm_body = _uvc_llm(accumulated_content)
                 assistant_msg: dict[str, Any] = {
                     "role": "assistant",
-                    "content": accumulated_content if accumulated_content else None,
+                    "content": _llm_body if _llm_body else None,
                 }
                 _rc = (accumulated_reasoning or "").strip()
                 if _rc:
@@ -3779,15 +3818,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 assistant_msg["tool_calls"] = assistant_tool_calls
                 messages.append(assistant_msg)
 
-                # 持久化中间 assistant（含 tool_calls + 思考块），便于跨轮续跑与 UI 回放
+                # 持久化中间 assistant（tool_calls）；思考与抢答正文不进用户气泡
                 try:
-                    from backend.agent.thinking_format import canonicalize_thinking
-
                     await self._save_message(
                         session_id,
                         "assistant",
-                        canonicalize_thinking(
-                            accumulated_reasoning, accumulated_content or ""
+                        content_for_chat_persist(
+                            accumulated_content, has_tool_calls=True
                         ),
                         tool_calls=assistant_tool_calls,
                     )
@@ -4028,14 +4065,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 if _nr.action == "continue":
                     continue
                 from backend.agent.thinking_format import (
-                    canonicalize_thinking,
                     ensure_user_facing_final,
                     sanitize_force_final_body,
                 )
+                from backend.agent.user_channel import user_visible_content
 
-                # 最终答复附带本轮 reasoning，UI 折叠展示；逻辑层 empty 检查仍用 body
-                final_content = canonicalize_thinking(
-                    accumulated_reasoning, _nr.final_content or accumulated_content
+                # 最终答复不含 thinking 标签；逻辑层 empty 检查仍用 body
+                final_content = user_visible_content(
+                    _nr.final_content or accumulated_content
                 )
                 if _force_final_no_tools:
                     # Keep real user summaries; only collapse scare inventories.
@@ -4081,10 +4118,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 session_id,
             )
             from backend.agent.thinking_format import (
-                canonicalize_thinking,
                 ensure_user_facing_final,
                 short_segment_handoff_message,
             )
+            from backend.agent.user_channel import user_visible_content
 
             _raw_end = accumulated_content or (
                 short_segment_handoff_message(goal_mode=goal_mode)
@@ -4113,10 +4150,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 tool_rounds=int(_tool_rounds or 0),
                 goal_mode=goal_mode,
             )
-            final_content = canonicalize_thinking(
-                accumulated_reasoning,
-                _raw_end,
-            )
+            final_content = user_visible_content(_raw_end)
             if goal_mode:
                 from backend.agent.goal_state import get_goal, save_goal_to_db
 

@@ -52,6 +52,9 @@ def _default_contact_identity(name: str) -> str:
     if is_steward:
         return (
             f"You are {name}, the company steward (大管家/CEO). The user is your boss. "
+            "Repo / code / review / debug: tools first (read or clone); "
+            "never invent a project description. "
+            "Greetings like 在吗 may answer immediately with no tools. "
             "DEFAULT: simple Q&A / weather / trending / one-shot search / short facts — "
             "answer yourself in this session with tools (web_search, etc.); "
             "do NOT hire/assign. "

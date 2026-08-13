@@ -59,3 +59,23 @@ def test_identity_override_still_checked_by_caller() -> None:
     """identity 可被覆盖（用户自定义人格），但默认路径不被静默注入厂商身份。"""
     parts = build_system_prompt(tools_enabled=[])
     assert DEFAULT_IDENTITY in parts["stable"]
+
+
+def test_tool_use_enforcement_is_repo_tool_first() -> None:
+    from backend.agent.system_prompt import THINKING_GUIDANCE, TOOL_USE_ENFORCEMENT
+
+    low = TOOL_USE_ENFORCEMENT.lower()
+    assert "invent" in low or "编造" in TOOL_USE_ENFORCEMENT
+    assert "在吗" in TOOL_USE_ENFORCEMENT
+    # Do not teach writing thinking tags into the user body
+    assert "put your internal reasoning in <thinking>" not in THINKING_GUIDANCE.lower()
+    assert "do **not** wrap" in THINKING_GUIDANCE.lower() or "do not wrap" in THINKING_GUIDANCE.lower()
+
+
+def test_ceo_identity_does_not_treat_repo_review_as_simple_qa() -> None:
+    from backend.api.routes.sessions import _default_contact_identity
+
+    text = _default_contact_identity("小白")
+    assert "tools first" in text.lower() or "工具" in text
+    assert "在吗" in text
+    assert "invent" in text.lower() or "编造" in text

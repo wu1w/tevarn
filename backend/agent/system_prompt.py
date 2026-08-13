@@ -42,10 +42,11 @@ USER_LANGUAGE_RULE = (
 
 TOOL_USE_ENFORCEMENT = (
     "# Tool use\n"
-    "When action is required (files, shell, search, config, live data), use tools "
-    "in the same turn — do not only describe what you would do.\n"
-    "When the user only needs a conversational answer and tools are unnecessary, "
-    "reply in plain text with no tool calls.\n"
+    "When action is required (files, shell, search, config, live data, a git "
+    "repo, or a code review), use tools in the same turn — do not only describe "
+    "what you would do, and do not invent a project description before reading "
+    "files or fetching the repo.\n"
+    "Greetings and casual chat (e.g. 在吗 / hi) may answer immediately with no tools.\n"
     "If you say you will run a command or open a file, actually issue the tool call "
     "now. Do not end a turn with an unfulfilled promise.\n"
     "Every response should either (a) make progress with tools, or (b) deliver a "
@@ -168,18 +169,18 @@ PROFESSIONAL_OBJECTIVITY = (
     "rigorous standards to all ideas and disagree when necessary."
 )
 
-# For models WITHOUT native reasoning_content — teach collapsible tags.
+# Keep CoT off the user-visible body (native reasoning is a separate stream).
 THINKING_GUIDANCE = (
     "# Reasoning transparency\n"
-    "When tasks are complex, put your internal reasoning in <thinking>...</thinking> "
-    "tags (shown as collapsible to the user). Put your final answer outside the "
-    "tags. This keeps your reasoning visible without cluttering the response.\n"
+    "Do **not** wrap replies in <thinking>...</thinking> or restate long "
+    "chain-of-thought in the visible body. Visible text is the answer, or a "
+    "short progress note while tools run.\n"
     "For diagrams and architecture: prefer ```mermaid code blocks for flowcharts "
     "and sequence diagrams. Use fenced code blocks with language tags for code."
 )
 
 # For models WITH native reasoning streams — do NOT also write <thinking> in content
-# (backend already streams reasoning_content as a ThinkingBlock). Avoid double-thinking.
+# (backend already records reasoning_content off the user channel).
 THINKING_GUIDANCE_NATIVE = (
     "# Reasoning transparency\n"
     "Your provider streams internal reasoning separately — do **not** wrap replies "
@@ -265,7 +266,9 @@ SURFACE_SEARCH_GUIDANCE = (
 SURFACE_CODING_GUIDANCE = (
     "# This-turn surface: coding\n"
     "Path: read relevant files → edit/apply_patch → verify with command/python. "
-    "Batch independent reads. Prefer unified diff style when presenting changes. "
+    "Do not describe a repository or invent its purpose before reading files "
+    "(or cloning/fetching it). Batch independent reads. Prefer unified diff style "
+    "when presenting changes. "
     "Do not claim a tool is unavailable when it is in your tool list."
 )
 
