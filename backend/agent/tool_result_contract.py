@@ -23,13 +23,12 @@ from typing import Any
 # file_read（T3）：executor 已按行边界分页并给出续读 offset，是截断的权威。
 # 这里再来一刀 head+tail 拼接会把「第 1-30 行 …省略… 末尾几行」交给模型，
 # 而模型以为自己读到了完整文件 —— 基于断裂视图改代码是静默错改的主因。
-# audit-fix(#7)：预算 21_000 → 12_000（压 context 占用）；executor 单次分页上限
-# FILE_READ_MAX_CHARS=20_000 不变，超出 12k 的读文件结果走 head+tail 兜底，
-# 模型应按 executor 给出的 offset 续读而非假设已读全文。
+# 预算必须高于 FILE_READ_MAX_CHARS（含 footer 余量），否则 12k 窗会把一个
+# 模块切成 ~250 行的 offset+= 片（slice-thrash）。超大文件仍由 executor 分页。
 # Aggressive defaults (H2/P1): prefer spill handle over fat LLM context.
 # file_read keeps higher budget so executor pagination remains authority.
 TOOL_RESULT_BUDGET: dict[str, int] = {
-    "file_read": 12_000,
+    "file_read": 100_000,
     "grep": 900,
     "glob": 600,
     # cargo/rustc diagnostics are long; 1200 forced head+tail thrash on E0xxx lists

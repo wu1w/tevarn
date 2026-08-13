@@ -14,11 +14,10 @@ def test_file_read_budget_is_deliberately_generous():
     )
     from backend.services.tools.executors import _file_read_char_budget
 
-    # audit-fix：预算自 21_000 收敛到 12_000（≈8K tokens，对齐主流单次读取量级）。
-    # 真正的不变式不是某个魔法数字，而是「契约预算 > 分页输出（含 footer 余量）」，
-    # 保证按行分好的视图永远不会被二次 head+tail 拼接。
+    # 契约：file_read 预算必须高于 executor 分页输出（含 footer），
+    # 否则按行分好的视图会被二次 head+tail 拼接。12k 窗曾把模块切成 ~250 行片。
     assert TOOL_RESULT_BUDGET["file_read"] >= _file_read_char_budget() + 500
-    assert TOOL_RESULT_BUDGET["file_read"] > DEFAULT_TOOL_BUDGET * 10
+    assert TOOL_RESULT_BUDGET["file_read"] > DEFAULT_TOOL_BUDGET
 
     # 分页后的正常读取（远小于预算）必须原样透传，不得截断
     paged = "\n".join(f"{i:6d}\tline{i}" for i in range(1, 300))
@@ -27,9 +26,9 @@ def test_file_read_budget_is_deliberately_generous():
 
 def test_file_read_head_tail_splice_is_last_resort():
     """病态内容（单行超长、无行结构）超过预算时仍兜底截断，不能无限放行。"""
-    raw = "A" * 40_000
+    raw = "A" * 200_000
     out = truncate_for_llm("file_read", raw)
-    assert len(out) < 40_000
+    assert len(out) < 200_000
     assert "omitted" in out
     assert out.startswith("A")
 

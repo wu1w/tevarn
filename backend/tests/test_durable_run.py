@@ -8,6 +8,7 @@
 - checkpoint 带 run_id
 """
 import asyncio
+import json
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -298,6 +299,183 @@ def test_recorder_finish_idempotent():
             assert statuses == ["done"]
 
     asyncio.run(_run())
+
+
+@pytest.mark.asyncio
+async def test_token_used_updated_when_stream_reports_usage():
+    """Usage kept after finish_reason must land on agent_runs.token_used."""
+    from backend.agent.run_recorder import RunRecorder
+    from backend.services.llm.openai_compatible import OpenAIStreamAccumulator
+
+    repo = _mock_repo()
+    with patch(
+        "backend.repositories.agent_run_repo.AsyncAgentRunRepository",
+        return_value=repo,
+    ):
+        rec = RunRecorder(uuid.uuid4())
+        await rec.start("task")
+        acc = OpenAIStreamAccumulator(
+            uuid.uuid4(),
+            normalize_usage=lambda u: {
+                "prompt_tokens": int(u.get("prompt_tokens") or 0),
+                "completion_tokens": int(u.get("completion_tokens") or 0),
+                "total_tokens": int(u.get("total_tokens") or 0),
+            },
+        )
+        acc.consume_data_line(json.dumps({
+            "choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}],
+        }))
+        acc.consume_data_line(json.dumps({
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 80,
+                "total_tokens": 1280,
+            },
+        }))
+        done, chunks = acc.consume_data_line("[DONE]")
+        assert done is True
+        finish = next(c for c in chunks if c.finish_reason)
+        rec.note_llm_round_usage(finish.usage)
+        rec.note_llm_round_usage({
+            "prompt_tokens": 400,
+            "completion_tokens": 20,
+            "total_tokens": 420,
+        })
+        rec.set_token_used(0)
+        await rec.finish_ok("done")
+
+    final = repo.update_run.call_args_list[-1].args[1]
+    assert final["token_used"] == 1280 + 420
+    assert final["meta"]["token_used_source"] == "provider"
+
+
+@pytest.mark.asyncio
+async def test_token_used_omitted_is_explicit_not_silent_zero():
+    from backend.agent.run_recorder import RunRecorder
+
+    repo = _mock_repo()
+    with patch(
+        "backend.repositories.agent_run_repo.AsyncAgentRunRepository",
+        return_value=repo,
+    ):
+        rec = RunRecorder(uuid.uuid4())
+        await rec.start("task")
+        rec.note_llm_round_usage(None)
+        rec.note_llm_round_usage({})
+        rec.set_token_used(0)
+        await rec.finish_ok("done")
+
+    final = repo.update_run.call_args_list[-1].args[1]
+    assert final["token_used"] == 0
+    assert final["meta"]["token_used_source"] == "omitted"
+
+
+@pytest.mark.asyncio
+async def test_token_used_partial_when_some_rounds_lack_usage():
+    from backend.agent.run_recorder import RunRecorder
+
+    repo = _mock_repo()
+    with patch(
+        "backend.repositories.agent_run_repo.AsyncAgentRunRepository",
+        return_value=repo,
+    ):
+        rec = RunRecorder(uuid.uuid4())
+        await rec.start("task")
+        rec.note_llm_round_usage({"prompt_tokens": 10, "completion_tokens": 2})
+        rec.note_llm_round_usage(None)
+        await rec.finish_ok("done")
+
+    final = repo.update_run.call_args_list[-1].args[1]
+    assert final["token_used"] == 12
+    assert final["meta"]["token_used_source"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_llm_round_notes_usage_onto_recorder():
+    """llm_round must call note_llm_round_usage — not only kernel charge."""
+    import inspect
+
+    from backend.agent.phases import llm_round as mod
+    from backend.agent.run_recorder import RunRecorder
+
+    src = inspect.getsource(mod._run_llm_round_body)
+    assert "note_llm_round_usage" in src
+    assert "stream_usage" in src
+    finish_src = inspect.getsource(RunRecorder._finish)
+    assert "apply_process_ledger" in finish_src
+
+
+@pytest.mark.asyncio
+async def test_token_used_copied_from_usage_ledger_by_process(tmp_path, monkeypatch):
+    """Live path: ledger has prompt/completion, run row was 0. Copy, don't invent."""
+    from backend.agent.run_recorder import RunRecorder
+    from backend.services import usage_ledger as ul
+
+    ledger = tmp_path / "usage_ledger.json"
+    monkeypatch.setenv("TEVARN_USAGE_LEDGER", str(ledger))
+    ul.reset_for_tests()
+    ul.charge(
+        process_id="proc-live",
+        family="openai",
+        model="gpt-test",
+        tokens=428022 + 4959,
+        billable=365909,
+        prompt=428022,
+        completion=4959,
+        cache_read=67072,
+        estimated=False,
+    )
+
+    repo = _mock_repo()
+    with patch(
+        "backend.repositories.agent_run_repo.AsyncAgentRunRepository",
+        return_value=repo,
+    ):
+        rec = RunRecorder(uuid.uuid4())
+        rec.kernel_process_id = "proc-live"
+        await rec.start("task")
+        rec.note_llm_round_usage(None)  # stream side looked empty
+        rec.set_token_used(0)
+        await rec.finish_ok("done")
+
+    final = repo.update_run.call_args_list[-1].args[1]
+    assert final["token_used"] == 428022 + 4959
+    assert final["meta"]["token_used_source"] == "provider"
+
+
+@pytest.mark.asyncio
+async def test_token_used_does_not_copy_estimated_ledger_tokens(tmp_path, monkeypatch):
+    from backend.agent.run_recorder import RunRecorder
+    from backend.services import usage_ledger as ul
+
+    ledger = tmp_path / "usage_ledger.json"
+    monkeypatch.setenv("TEVARN_USAGE_LEDGER", str(ledger))
+    ul.reset_for_tests()
+    ul.charge(
+        process_id="proc-est",
+        family="openai",
+        tokens=900,
+        billable=900,
+        prompt=0,
+        completion=0,
+        estimated=True,
+    )
+
+    repo = _mock_repo()
+    with patch(
+        "backend.repositories.agent_run_repo.AsyncAgentRunRepository",
+        return_value=repo,
+    ):
+        rec = RunRecorder(uuid.uuid4())
+        rec.kernel_process_id = "proc-est"
+        await rec.start("task")
+        rec.note_llm_round_usage(None)
+        await rec.finish_ok("done")
+
+    final = repo.update_run.call_args_list[-1].args[1]
+    assert final["token_used"] == 0
+    assert final["meta"]["token_used_source"] == "omitted"
 
 
 # ═══════════ 5. checkpoint 带 run_id ═══════════
