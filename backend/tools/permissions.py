@@ -16,8 +16,6 @@
 """
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import logging
 import os
 import re
@@ -26,6 +24,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Iterator
 
+from backend.core.config import get_tevarn_home
 from backend.tools.base import BaseTool, ToolRiskLevel
 
 logger = logging.getLogger(__name__)

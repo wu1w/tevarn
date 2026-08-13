@@ -12,8 +12,6 @@ Design constraints (keep thin):
 """
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import atexit
 import json
 import logging
@@ -23,6 +21,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+
+from backend.core.config import get_tevarn_home
 
 logger = logging.getLogger(__name__)
 

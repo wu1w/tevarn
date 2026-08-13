@@ -9,8 +9,6 @@ P0–P2 能力补齐工具：
 """
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import asyncio
 import json
 import logging
@@ -20,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from backend.core.config import get_tevarn_home
 from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 logger = logging.getLogger(__name__)

@@ -14,13 +14,13 @@ On non-Windows this is a thin uvicorn wrapper (policy no-op).
 """
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import argparse
 import asyncio
 import os
 import sys
 from pathlib import Path
+
+from backend.core.config import get_tevarn_home
 
 
 def _arm_env() -> None:

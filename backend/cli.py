@@ -15,8 +15,6 @@ Tevarn CLI — Kernel Host / 控制台命令
 
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import argparse
 import json
 import os
@@ -25,6 +23,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+from backend.core.config import get_tevarn_home
 
 
 def _root() -> Path:

@@ -57,6 +57,39 @@ def merge_stream_tool_delta(
         entry["thought_signature"] = tc.get("thought_signature")
 
 
+def tool_call_to_openai_message(tc: ToolCall | Any) -> dict[str, Any]:
+    """Serialize ToolCall for the next-turn assistant.tool_calls array.
+
+    Gemini OpenAI-compat requires ``extra_content`` / ``thought_signature`` on
+    the function-call object in subsequent requests (Gemini 3 multi-turn).
+    """
+    args = getattr(tc, "arguments", None)
+    if not isinstance(args, str):
+        try:
+            args_s = json.dumps(args if args is not None else {}, ensure_ascii=False)
+        except Exception:
+            args_s = "{}"
+    else:
+        args_s = args
+    item: dict[str, Any] = {
+        "id": str(getattr(tc, "id", "") or f"call_{uuid.uuid4().hex[:8]}"),
+        "type": "function",
+        "function": {
+            "name": str(getattr(tc, "name", "") or ""),
+            "arguments": args_s,
+        },
+    }
+    extra = getattr(tc, "extra_content", None)
+    sig = getattr(tc, "thought_signature", None)
+    if extra is not None and isinstance(extra, dict):
+        item["extra_content"] = extra
+    if sig:
+        item["thought_signature"] = str(sig)
+        if "extra_content" not in item:
+            item["extra_content"] = {"google": {"thought_signature": str(sig)}}
+    return item
+
+
 def _tool_call_from_openai(tc: dict[str, Any]) -> ToolCall:
     """Build ToolCall preserving Gemini thought_signature / extra_content."""
     fn = tc.get("function") or {}
@@ -84,6 +117,139 @@ def _tool_call_from_openai(tc: dict[str, Any]) -> ToolCall:
         extra_content=extra,
         thought_signature=str(sig) if sig else None,
     )
+
+
+class OpenAIStreamAccumulator:
+    """Merge Chat Completions SSE deltas; delay finish until stream end.
+
+    OpenAI ``stream_options.include_usage`` delivers usage in a later chunk with
+    empty ``choices`` *after* ``finish_reason``. Stopping on finish_reason drops
+    that usage (and can hide trailing tool-call deltas on some gateways).
+    """
+
+    def __init__(self, message_id: uuid.UUID, *, normalize_usage=None):
+        self.message_id = message_id
+        self.accumulated_tool_calls: dict[int, dict[str, Any]] = {}
+        self.last_finish_reason: str | None = None
+        self.stream_usage: dict[str, int] = {}
+        self._normalize_usage = normalize_usage or (lambda u: u if isinstance(u, dict) else {})
+        self._tools_emitted = False
+        self._finish_emitted = False
+
+    def consume_data_line(self, payload_s: str) -> tuple[bool, list[LLMChunk]]:
+        """Parse one SSE data payload → (stream_done, chunks).
+
+        ``stream_done`` is True only for ``[DONE]``. ``finish_reason`` is recorded
+        but does not stop the stream.
+        """
+        if payload_s == "[DONE]":
+            return True, self.finalize()
+        if not payload_s:
+            return False, []
+        try:
+            data = json.loads(payload_s)
+        except json.JSONDecodeError:
+            return False, []
+
+        raw_usage = data.get("usage")
+        if isinstance(raw_usage, dict) and raw_usage:
+            mapped = self._normalize_usage(raw_usage)
+            if isinstance(mapped, dict) and mapped:
+                self.stream_usage.update(mapped)
+
+        choices = data.get("choices") or []
+        if not choices:
+            return False, []
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice.get("delta", {}) or {}
+
+        chunks_out: list[LLMChunk] = []
+        content = delta.get("content", "") or ""
+        if content:
+            chunks_out.append(LLMChunk(message_id=self.message_id, delta=content))
+
+        reasoning = (
+            delta.get("reasoning_content")
+            or delta.get("reasoning")
+            or delta.get("thought")
+            or ""
+        )
+        if isinstance(reasoning, dict):
+            reasoning = (
+                reasoning.get("text")
+                or reasoning.get("content")
+                or reasoning.get("summary")
+                or ""
+            )
+        if reasoning:
+            chunks_out.append(
+                LLMChunk(
+                    message_id=self.message_id,
+                    delta="",
+                    reasoning_delta=str(reasoning),
+                )
+            )
+
+        for tc in delta.get("tool_calls") or []:
+            if isinstance(tc, dict):
+                merge_stream_tool_delta(self.accumulated_tool_calls, tc)
+
+        finish_reason = choice.get("finish_reason")
+        if finish_reason:
+            self.last_finish_reason = finish_reason
+        return False, chunks_out
+
+    def _emit_tool_calls(self) -> list[LLMChunk]:
+        if self._tools_emitted:
+            return []
+        out: list[LLMChunk] = []
+        for tc_data in self.accumulated_tool_calls.values():
+            name = (tc_data.get("name") or "").strip()
+            if not name:
+                logger.warning("Skipping stream tool_call with empty name: %s", tc_data)
+                continue
+            shaped = {
+                "id": tc_data.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                "function": {
+                    "name": name,
+                    "arguments": tc_data.get("arguments") or "{}",
+                },
+            }
+            if tc_data.get("extra_content") is not None:
+                shaped["extra_content"] = tc_data.get("extra_content")
+            if tc_data.get("thought_signature") is not None:
+                shaped["thought_signature"] = tc_data.get("thought_signature")
+            out.append(
+                LLMChunk(
+                    message_id=self.message_id,
+                    delta="",
+                    tool_call=_tool_call_from_openai(shaped),
+                )
+            )
+        self._tools_emitted = True
+        return out
+
+    def finalize(self) -> list[LLMChunk]:
+        """Flush tool calls + finish_reason with any usage collected so far."""
+        if self._finish_emitted:
+            return []
+        out = self._emit_tool_calls()
+        if self.accumulated_tool_calls and any(
+            (v.get("name") or "").strip() for v in self.accumulated_tool_calls.values()
+        ):
+            effective = "tool_calls"
+        else:
+            effective = self.last_finish_reason or "stop"
+        out.append(
+            LLMChunk(
+                message_id=self.message_id,
+                delta="",
+                finish_reason=effective,
+                usage=dict(self.stream_usage) if self.stream_usage else {},
+            )
+        )
+        self._finish_emitted = True
+        return out
 
 
 class OpenAICompatibleService(LLMService):
@@ -774,44 +940,13 @@ class OpenAICompatibleService(LLMService):
                 yield LLMChunk(message_id=message_id, delta=f"[LLM Error] {e}", finish_reason="error")
             return
 
-        accumulated_tool_calls: dict[int, dict[str, Any]] = {}
-        last_finish_reason: str | None = None
-        stream_usage: dict[str, int] = {}
-
-        def _merge_tool_delta(tc: dict[str, Any]) -> None:
-            """合并流式 tool_call 增量（后续 chunk 可能补全 id/name）。"""
-            merge_stream_tool_delta(accumulated_tool_calls, tc)
-
-        def _emit_tool_calls() -> list[LLMChunk]:
-            """无论 finish_reason 是 tool_calls 还是 stop，只要有工具调用就发出。"""
-            out: list[LLMChunk] = []
-            for tc_data in accumulated_tool_calls.values():
-                name = (tc_data.get("name") or "").strip()
-                if not name:
-                    logger.warning("Skipping stream tool_call with empty name: %s", tc_data)
-                    continue
-                shaped = {
-                    "id": tc_data.get("id") or f"call_{uuid.uuid4().hex[:8]}",
-                    "function": {
-                        "name": name,
-                        "arguments": tc_data.get("arguments") or "{}",
-                    },
-                }
-                if tc_data.get("extra_content") is not None:
-                    shaped["extra_content"] = tc_data.get("extra_content")
-                if tc_data.get("thought_signature") is not None:
-                    shaped["thought_signature"] = tc_data.get("thought_signature")
-                out.append(
-                    LLMChunk(
-                        message_id=message_id,
-                        delta="",
-                        tool_call=_tool_call_from_openai(shaped),
-                    )
-                )
-            return out
+        acc = OpenAIStreamAccumulator(
+            message_id, normalize_usage=self._normalize_usage
+        )
 
         try:
             from .http_session import ensure_session, stream_timeout
+            from .sse import split_sse_data_lines
 
             session = ensure_session(self)
             async with session.post(
@@ -823,95 +958,12 @@ class OpenAICompatibleService(LLMService):
                 sse_buf = ""
                 stream_done = False
 
-                def _sse_payload_lines(text: str) -> tuple[str, list[str]]:
-                    text = text.replace("\r\n", "\n").replace("\r", "\n")
-                    parts = text.split("\n")
-                    residual = parts.pop()
-                    out: list[str] = []
-                    for line in parts:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        if line.startswith("data: "):
-                            out.append(line[6:])
-                        elif line.startswith("data:"):
-                            out.append(line[5:].strip())
-                    return residual, out
-
-                def _consume_data_line(payload_s: str) -> tuple[bool, list]:
-                    """Parse one SSE data payload → (stop_stream, chunks_to_yield)."""
-                    nonlocal last_finish_reason
-                    if not payload_s or payload_s == "[DONE]":
-                        return payload_s == "[DONE]", []
-                    try:
-                        data = json.loads(payload_s)
-                    except json.JSONDecodeError:
-                        return False, []
-
-                    raw_usage = data.get("usage")
-                    if isinstance(raw_usage, dict) and raw_usage:
-                        stream_usage.update(self._normalize_usage(raw_usage))
-
-                    choices = data.get("choices") or []
-                    if not choices:
-                        return False, []
-                    choice = choices[0] if isinstance(choices[0], dict) else {}
-                    delta = choice.get("delta", {}) or {}
-
-                    chunks_out: list = []
-                    content = delta.get("content", "") or ""
-                    if content:
-                        chunks_out.append(LLMChunk(message_id=message_id, delta=content))
-
-                    reasoning = (
-                        delta.get("reasoning_content")
-                        or delta.get("reasoning")
-                        or delta.get("thought")
-                        or ""
-                    )
-                    if isinstance(reasoning, dict):
-                        reasoning = (
-                            reasoning.get("text")
-                            or reasoning.get("content")
-                            or reasoning.get("summary")
-                            or ""
-                        )
-                    if reasoning:
-                        chunks_out.append(
-                            LLMChunk(
-                                message_id=message_id,
-                                delta="",
-                                reasoning_delta=str(reasoning),
-                            )
-                        )
-
-                    for tc in delta.get("tool_calls") or []:
-                        _merge_tool_delta(tc)
-
-                    finish_reason = choice.get("finish_reason")
-                    stop = False
-                    if finish_reason:
-                        last_finish_reason = finish_reason
-                        emitted = _emit_tool_calls()
-                        chunks_out.extend(emitted)
-                        effective = "tool_calls" if emitted else finish_reason
-                        chunks_out.append(
-                            LLMChunk(
-                                message_id=message_id,
-                                delta="",
-                                finish_reason=effective,
-                                usage=dict(stream_usage) if stream_usage else {},
-                            )
-                        )
-                        stop = True
-                    return stop, chunks_out
-
                 async for raw in resp.content:
                     chunk = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
                     text_s = sse_buf + chunk.decode("utf-8", errors="replace")
-                    sse_buf, payloads = _sse_payload_lines(text_s)
+                    sse_buf, payloads = split_sse_data_lines(text_s)
                     for payload_s in payloads:
-                        stop, chunks_out = _consume_data_line(payload_s)
+                        stop, chunks_out = acc.consume_data_line(payload_s)
                         for c in chunks_out:
                             yield c
                         if stop:
@@ -921,32 +973,17 @@ class OpenAICompatibleService(LLMService):
                         break
                 # Residual buffer (no trailing newline on last event)
                 if not stream_done and (sse_buf or "").strip():
-                    _, payloads = _sse_payload_lines(sse_buf + "\n")
+                    _, payloads = split_sse_data_lines(sse_buf + "\n")
                     for payload_s in payloads:
-                        stop, chunks_out = _consume_data_line(payload_s)
+                        stop, chunks_out = acc.consume_data_line(payload_s)
                         for c in chunks_out:
                             yield c
                         if stop:
                             stream_done = True
                             break
                 if not stream_done:
-                    # 流正常结束但没有 finish_reason：仍冲刷工具调用
-                    if accumulated_tool_calls:
-                        for chunk in _emit_tool_calls():
-                            yield chunk
-                        yield LLMChunk(
-                            message_id=message_id,
-                            delta="",
-                            finish_reason="tool_calls",
-                            usage=dict(stream_usage) if stream_usage else {},
-                        )
-                    elif last_finish_reason is None:
-                        yield LLMChunk(
-                            message_id=message_id,
-                            delta="",
-                            finish_reason="stop",
-                            usage=dict(stream_usage) if stream_usage else {},
-                        )
+                    for c in acc.finalize():
+                        yield c
 
         except aiohttp.ClientResponseError as e:
             logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")

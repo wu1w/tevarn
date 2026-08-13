@@ -23,16 +23,24 @@ from backend.tools.adapters.mcp_adapter import (
 
 logger = logging.getLogger(__name__)
 
-# After manage_mcp reload/sync, agent loop refreshes tool schemas next LLM round
+# After manage_mcp reload/sync, agent loop refreshes tool schemas next LLM round.
+# Generation (not a bool consume) so concurrent sessions each see the bump.
 _TOOLS_DIRTY: bool = False
+_TOOLS_DIRTY_GEN: int = 0
 
 
 def mark_tools_dirty() -> None:
-    global _TOOLS_DIRTY
+    global _TOOLS_DIRTY, _TOOLS_DIRTY_GEN
     _TOOLS_DIRTY = True
+    _TOOLS_DIRTY_GEN += 1
+
+
+def tools_dirty_generation() -> int:
+    return _TOOLS_DIRTY_GEN
 
 
 def consume_tools_dirty() -> bool:
+    """Legacy one-shot flag. Prefer ``tools_dirty_generation`` (multi-session)."""
     global _TOOLS_DIRTY
     if _TOOLS_DIRTY:
         _TOOLS_DIRTY = False

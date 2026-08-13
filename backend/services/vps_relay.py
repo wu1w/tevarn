@@ -6,8 +6,6 @@ Storage: ~/.tevarn/vps_relay.json (0600)
 
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import json
 import logging
 import os
@@ -17,6 +15,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
+
+from backend.core.config import get_tevarn_home
 
 logger = logging.getLogger(__name__)
 

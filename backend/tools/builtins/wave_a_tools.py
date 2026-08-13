@@ -8,8 +8,6 @@ Wave A 办公/多模态工具：
 """
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import asyncio
 import base64
 import json
@@ -22,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from backend.core.config import get_tevarn_home
 from backend.tools.base import BaseTool, ToolRiskLevel, ToolSource
 
 logger = logging.getLogger(__name__)

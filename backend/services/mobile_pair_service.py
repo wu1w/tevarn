@@ -13,8 +13,6 @@ tevarn://pair?v=4&pair_id=…&code=…&host=…&port=…&exp=…&mesh=auto
 
 from __future__ import annotations
 
-from backend.core.config import get_tevarn_home
-
 import ipaddress
 import json
 import logging
@@ -29,6 +27,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
+
+from backend.core.config import get_tevarn_home
 
 logger = logging.getLogger(__name__)
 
