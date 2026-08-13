@@ -46,8 +46,14 @@ async function main() {
     if (!arts.some((a) => a.kind === 'markdown' || a.name.includes('hello'))) {
       throw new Error('missing md');
     }
-    if (!artifactPreviewable('docx') || !artifactPreviewable('pptx') || !artifactPreviewable('html')) {
+    if (!artifactPreviewable('docx') || !artifactPreviewable('pptx') || !artifactPreviewable('html') || !artifactPreviewable('visio')) {
       throw new Error('previewable');
+    }
+    const visioArts = extractArtifacts({
+      content: '打开 topology.vsd 和 architecture.vsdx',
+    });
+    if (!visioArts.some((a) => a.kind === 'visio' && a.name.includes('topology'))) {
+      throw new Error('vsd kind ' + JSON.stringify(visioArts));
     }
     ok('extractArtifacts kinds');
     const sess = collectSessionArtifacts([
@@ -65,6 +71,9 @@ async function main() {
     if (rows[1][1] !== '2,3') throw new Error(JSON.stringify(rows));
     const h = sanitizeHtmlForPreview('<p onclick=alert(1)>x</p><script>bad</script>');
     if (h.includes('script') || /onclick/i.test(h)) throw new Error(h);
+    const { sanitizeSvgForPreview } = await import('../lib/filePreviewLoaders');
+    const svg = sanitizeSvgForPreview('<svg xmlns="http://www.w3.org/2000/svg"><script>bad()</script><rect x="1" y="1" width="10" height="10"/></svg>');
+    if (/script/i.test(svg)) throw new Error(svg);
     ok('csv+sanitizeHtml');
   } catch (e) {
     ko('csv/html', e);

@@ -405,6 +405,57 @@ async def open_workspace_file(
     return {"ok": True, "abs_path": abs_path, "path": rel}
 
 
+@router.get("/visio-preview")
+async def visio_preview(
+    path: str = Query(..., description="Visio file path relative to mode root"),
+    mode: str = Query("sandbox", description="sandbox | local"),
+    as_format: str = Query("json", alias="as", description="json | pdf"),
+    current_user: Annotated[UserRead, Depends(get_current_user)] = None,
+):
+    """Preview Microsoft Visio drawings (.vsd / .vsdx / .vsdm / .vdx).
+
+    VSDX is rendered to SVG in-process. Binary .vsd uses LibreOffice or
+    libvisio when installed; otherwise returns extracted strings + install hint.
+    """
+    from backend.services.visio_preview import is_visio_path, preview_visio
+
+    rel = (path or "").strip().lstrip("/").replace("\\", "/")
+    if rel.lower().startswith("workspace/"):
+        rel = rel[len("workspace/") :]
+    target, base = _resolve_path(mode, rel)
+    _check_access(target, base)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    if not is_visio_path(target):
+        raise HTTPException(status_code=400, detail="Not a Visio file (.vsd/.vsdx/.vdx)")
+
+    try:
+        payload = preview_visio(target)
+    except Exception as e:
+        logger.warning("visio preview failed path=%s err=%s", target, e)
+        raise HTTPException(status_code=500, detail=f"Visio preview failed: {e}") from e
+
+    want_pdf = (as_format or "json").lower() == "pdf"
+    pdf_path = payload.get("pdf_path")
+    if want_pdf:
+        from fastapi.responses import FileResponse
+
+        if not pdf_path or not Path(pdf_path).is_file():
+            raise HTTPException(
+                status_code=422,
+                detail=payload.get("hint") or "PDF conversion unavailable for this Visio file",
+            )
+        return FileResponse(
+            path=str(pdf_path),
+            filename=f"{target.stem}.pdf",
+            media_type="application/pdf",
+        )
+
+    payload["path"] = rel
+    payload.pop("pdf_path", None)
+    return payload
+
+
 @router.get("/info")
 async def get_file_info(
     current_user: Annotated[UserRead, Depends(get_current_user)] = None,

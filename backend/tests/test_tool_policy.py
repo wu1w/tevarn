@@ -209,3 +209,14 @@ def test_profile_assistant_has_session_search():
     names, _ = resolve_enabled_tool_names(profile="assistant", user_input="x")
     assert names is not None
     assert "session_search" in names
+
+
+def test_visio_keyword_selects_office_pack():
+    names, plan = resolve_enabled_tool_names(
+        mode="default",
+        profile="dynamic",
+        user_input="帮我打开这个 vsd 流程图，看看 visio 里画了什么",
+    )
+    assert names is not None
+    assert "office" in plan.packs
+    assert "doc_read" in names

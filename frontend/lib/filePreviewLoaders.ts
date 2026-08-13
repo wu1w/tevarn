@@ -5,6 +5,21 @@
 
 import DOMPurify from 'dompurify';
 
+type Purify = { sanitize: (dirty: string, cfg?: Record<string, unknown>) => string };
+
+function getPurify(): Purify {
+  const raw = DOMPurify as unknown as Purify & { default?: Purify };
+  if (typeof raw.sanitize === 'function') return raw;
+  if (raw.default && typeof raw.default.sanitize === 'function') return raw.default;
+  // Node smoke / no window: strip obvious XSS; browser uses real DOMPurify.
+  return {
+    sanitize: (dirty: string) =>
+      String(dirty || '')
+        .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+        .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, ''),
+  };
+}
+
 export type SheetTable = { name: string; rows: string[][] };
 
 /** 统一成独立 ArrayBuffer，避免 Uint8Array.buffer 带 byteOffset 时 SheetJS/mammoth 读歪 */
@@ -189,10 +204,19 @@ export async function loadPptxSlides(
 }
 
 export function sanitizeHtmlForPreview(html: string): string {
-  return DOMPurify.sanitize(html || '', {
+  return getPurify().sanitize(html || '', {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
     FORBID_ATTR: ['style'],
+    ALLOW_DATA_ATTR: false,
+  });
+}
+
+export function sanitizeSvgForPreview(svg: string): string {
+  return getPurify().sanitize(svg || '', {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    ADD_TAGS: ['marker', 'defs'],
+    FORBID_TAGS: ['script', 'foreignObject', 'iframe', 'object', 'embed'],
     ALLOW_DATA_ATTR: false,
   });
 }

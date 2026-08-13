@@ -374,6 +374,8 @@
   "chat.openSystemFail": "Could not open with system app — try download",
   "chat.previewSlide": "Slide {n}",
   "chat.previewPptxHint": "PPT preview shows extracted text; download for full layout",
+  "chat.previewVisioPage": "Page {n}",
+  "chat.previewVisioHint": "Visio preview is rendered in Tevarn. For legacy .vsd graphics, install LibreOffice Draw.",
   "chat.sessionFiles": "Session files ({n})",
   "chat.uploadOkAttached": "Attached {n} file(s)",
   "common.close": "Close",

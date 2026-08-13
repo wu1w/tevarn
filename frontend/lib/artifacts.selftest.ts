@@ -27,4 +27,7 @@ const arts = extractArtifacts({
 assert(arts.some((a) => a.name.includes('report') || a.path.includes('report')), 'md link');
 assert(arts.some((a) => a.path.includes('hello.md')), 'tool path');
 assert(arts.some((a) => a.kind === 'table'), 'table kind');
+
+const visio = extractArtifacts({ content: '见 docs/网络拓扑.vsd 以及 flow.vsdx' });
+assert(visio.some((a) => a.kind === 'visio'), 'visio kind');
 console.log('artifacts.selftest OK', arts.length, arts.map((a) => a.name).join(', '));
