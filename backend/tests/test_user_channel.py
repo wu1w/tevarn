@@ -48,6 +48,16 @@ def test_chat_persist_hides_pretool_essay_keeps_progress():
     assert looks_like_progress_note(note)
 
 
+def test_thinking_only_tool_turn_persists_empty():
+    """Live: assistant row was only thinking tags + tool_calls, 0 visible text."""
+    raw = wrap_thinking("secret CoT", "")
+    assert "<thinking>" in raw
+    persisted = content_for_chat_persist(raw, has_tool_calls=True)
+    assert persisted == ""
+    assert "<thinking>" not in persisted
+    assert "secret CoT" not in persisted
+
+
 def test_thinking_not_in_persisted_user_content_with_tools():
     raw = wrap_thinking("plan glob then read", "正在列出源码。")
     persisted = content_for_chat_persist(raw, has_tool_calls=True)

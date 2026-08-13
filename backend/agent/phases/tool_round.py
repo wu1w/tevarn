@@ -1638,6 +1638,9 @@ async def run_tool_round(
             filter_tools_deliver_only as _ft_del,
         )
         from backend.agent.progress_guard import (
+            ignored_nudge_action as _nudge_act,
+        )
+        from backend.agent.progress_guard import (
             is_cargo_compile_failure as _is_cf,
         )
         from backend.agent.progress_guard import (
@@ -1929,39 +1932,65 @@ async def run_tool_round(
 
         # Wire dead counter: no real write for N rounds
         _nw = max(2, int(getattr(_st_pg, "agent_no_write_nudge_after", 3) or 3))
-        if (
-            int(getattr(state, "rounds_since_write", 0) or 0) >= _nw
-            and not state.force_final_no_tools
-            and (
-                state.rounds_since_write == _nw
-                or state.rounds_since_write % 2 == 0
-            )
-        ):
-            _arm_nw = True
-            try:
-                from backend.agent.progress_guard import (
-                    should_arm_deliver_mode as _sad2,
-                )
+        _nw_grace = max(1, int(getattr(_st_pg, "agent_no_write_force_after", 4) or 4))
+        _rsw = int(getattr(state, "rounds_since_write", 0) or 0)
+        _nw_act = _nudge_act(
+            current=_rsw, first_at=_nw, grace=_nw_grace, even_only=True
+        )
+        if _nw_act != "none" and not state.force_final_no_tools:
+            if _nw_act == "force_final":
+                state.force_final_no_tools = True
+                try:
+                    loop.last_exit_reason = "no_write_ignored"
+                except Exception:
+                    pass
+                try:
+                    from backend.agent.loop_decision import force_final as _ff_nw
 
-                _arm_nw = _sad2(str(user_input or ""), reason="no_write")
-            except Exception:
+                    _note = _ff_nw("no_write_ignored").as_system_message()
+                except Exception:
+                    _note = None
+                messages.append(
+                    _note
+                    or {
+                        "role": "system",
+                        "content": (
+                            "[Controller] No file writes after repeated nudges. "
+                            "Stop tools and answer the user now."
+                        ),
+                    }
+                )
+                logger.info(
+                    "no_write force_final rounds=%s session=%s",
+                    _rsw,
+                    session_id,
+                )
+            else:
                 _arm_nw = True
-            # Soft-open: nudge only — do not arm deliver_mode (no strip)
-            if _arm_nw and not _soft_open_now:
-                state.deliver_mode = True
-            messages.append(
-                {
-                    "role": "system",
-                    "content": _nw_nudge(rounds=state.rounds_since_write),
-                }
-            )
-            logger.info(
-                "no_write progress nudge rounds=%s deliver=%s soft_open=%s session=%s",
-                state.rounds_since_write,
-                bool(getattr(state, "deliver_mode", False)),
-                _soft_open_now,
-                session_id,
-            )
+                try:
+                    from backend.agent.progress_guard import (
+                        should_arm_deliver_mode as _sad2,
+                    )
+
+                    _arm_nw = _sad2(str(user_input or ""), reason="no_write")
+                except Exception:
+                    _arm_nw = True
+                # Soft-open: nudge only — do not arm deliver_mode (no strip)
+                if _arm_nw and not _soft_open_now:
+                    state.deliver_mode = True
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": _nw_nudge(rounds=_rsw),
+                    }
+                )
+                logger.info(
+                    "no_write progress nudge rounds=%s deliver=%s soft_open=%s session=%s",
+                    _rsw,
+                    bool(getattr(state, "deliver_mode", False)),
+                    _soft_open_now,
+                    session_id,
+                )
 
         # manage_goal cadence — only in goal_mode (casual Q&A must not be nagged)
         _mg_every = max(
@@ -1987,7 +2016,12 @@ async def run_tool_round(
             getattr(state, "deliver_mode", False)
             or getattr(state, "must_write_before_cargo", False)
         ):
-            state.force_final_no_tools = False
+            # Ignored-nudge force_final must not be undone by deliver strip.
+            if getattr(loop, "last_exit_reason", "") not in (
+                "no_write_ignored",
+                "converge_ignored",
+            ):
+                state.force_final_no_tools = False
             state.deliver_mode = True
             state.tools = _ft_del(state.tools)
             state.enabled_tools_filter = _fn_del(
@@ -2006,18 +2040,23 @@ async def run_tool_round(
             converge_nudge_text as _cnv,
         )
         from backend.agent.progress_guard import (
+            ignored_nudge_action as _cnv_act,
+        )
+        from backend.agent.progress_guard import (
             soft_open_mode as _so_cnv,
         )
         from backend.core.config import settings as _st_cnv
 
-        if _so_cnv() and not state.force_final_no_tools:
+        if not state.force_final_no_tools:
             _after = max(6, int(getattr(_st_cnv, "agent_converge_nudge_after", 16) or 16))
             _every = max(4, int(getattr(_st_cnv, "agent_converge_nudge_every", 10) or 10))
+            _grace = max(1, int(getattr(_st_cnv, "agent_converge_force_after", 2) or 2))
             # tool_rounds is completed count from prior rounds (incremented at end)
             _tr = int(getattr(state, "tool_rounds", 0) or 0) + 1
-            if _tr >= _after and (
-                _tr == _after or ((_tr - _after) % _every == 0)
-            ):
+            _act = _cnv_act(
+                current=_tr, first_at=_after, grace=_grace, every=_every
+            )
+            if _act == "nudge" and _so_cnv():
                 messages.append(
                     {
                         "role": "system",
@@ -2026,6 +2065,33 @@ async def run_tool_round(
                 )
                 logger.info(
                     "converge soft nudge rounds=%s session=%s",
+                    _tr,
+                    session_id,
+                )
+            elif _act == "force_final":
+                state.force_final_no_tools = True
+                try:
+                    loop.last_exit_reason = "converge_ignored"
+                except Exception:
+                    pass
+                try:
+                    from backend.agent.loop_decision import force_final as _ff_c
+
+                    _note = _ff_c("converge_ignored").as_system_message()
+                except Exception:
+                    _note = None
+                messages.append(
+                    _note
+                    or {
+                        "role": "system",
+                        "content": (
+                            "[Controller] Converge nudge was ignored. "
+                            "Stop tools and answer the user now."
+                        ),
+                    }
+                )
+                logger.info(
+                    "converge force_final rounds=%s session=%s",
                     _tr,
                     session_id,
                 )
@@ -2979,7 +3045,7 @@ async def run_tool_round(
         logger.debug("mid-loop context pipeline skipped: %s", e)
     if checkpoint_every > 0 and state.tool_rounds % checkpoint_every == 0:
         try:
-            from backend.agent.checkpoint import save_checkpoint
+            from backend.agent.checkpoint import recorder_run_id, save_checkpoint
             from backend.agent.goal_state import get_goal, save_goal_to_db
 
             await save_checkpoint(
@@ -2988,7 +3054,7 @@ async def run_tool_round(
                 iteration=global_iter + 1,
                 mode=mode,
                 note=f"tool_round={state.tool_rounds}",
-                run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
+                run_id=recorder_run_id(_rc),
             )
             if goal_mode:
                 await save_goal_to_db(session_id)

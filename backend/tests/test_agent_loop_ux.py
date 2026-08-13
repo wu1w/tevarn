@@ -31,6 +31,23 @@ def _chunk(delta=None, tool_call=None, finish=None, reasoning_delta=None):
     )
 
 
+class _ScriptedLLMRespectTools(_ScriptedLLM):
+    """When the loop passes tools=None (force_final), stop emitting tool_calls."""
+
+    async def chat(self, messages, tools=None, stream=True):
+        self.calls.append({"messages": [dict(m) for m in messages], "tools": tools})
+        if not tools:
+            yield _chunk(delta="审查结论：到此收束。", finish="stop")
+            return
+        chunks = (
+            self.script.pop(0)
+            if self.script
+            else [_chunk(delta="(剧本耗尽)", finish="stop")]
+        )
+        for ch in chunks:
+            yield ch
+
+
 def _make_loop(llm):
     loop, patcher = _make_loop_raw(llm)
 
@@ -244,3 +261,132 @@ def test_wrapup_dedup_stops_second_complete_review():
     assert "不应再来第四轮" not in (out or "")
     assert "逻辑问题" in (out or "")
     assert len(llm.calls) == 3  # fourth scripted round never sampled
+
+
+def test_auto_continue_segment_does_not_treat_reasoning_as_recorder():
+    """6-iter (here 2-iter) segment: reasoning str must not abort auto-continue."""
+    from backend.core.config import settings as _st
+
+    llm = _ScriptedLLM(
+        [
+            [
+                _chunk(reasoning_delta="planning reads"),
+                _chunk(
+                    tool_call=_tc("t1", "file_read", {"path": "a.py"}),
+                    finish="tool_calls",
+                ),
+            ],
+            [
+                _chunk(reasoning_delta="more plan"),
+                _chunk(
+                    tool_call=_tc("t2", "glob", {"pattern": "*.py"}),
+                    finish="tool_calls",
+                ),
+            ],
+            [_chunk(delta="续跑后的答复", finish="stop")],
+        ]
+    )
+    loop, patcher = _make_loop(llm)
+    loop.max_iterations = 2
+    loop._execute_registered_tool = AsyncMock(return_value="ok")
+    registry_patcher = patch(
+        "backend.tools.registry.ToolRegistry.get",
+        return_value=SimpleNamespace(parameters={"type": "object", "properties": {}}),
+    )
+    ck = patch(
+        "backend.agent.checkpoint.save_checkpoint",
+        new_callable=AsyncMock,
+    )
+    scene_cap = patch(
+        "backend.agent.tool_policy.scene_max_iterations",
+        return_value=2,
+    )
+    registry_patcher.start()
+    ck_m = ck.start()
+    scene_cap.start()
+    p_ac = patch.object(_st, "agent_auto_continue", True)
+    p_seg = patch.object(_st, "agent_auto_continue_max_segments", 3)
+    p_thr = patch.object(_st, "agent_thrash_force_final_interactive", False)
+    p_nar = patch.object(_st, "agent_no_autoresume_on_thrash", False)
+    p_ac.start()
+    p_seg.start()
+    p_thr.start()
+    p_nar.start()
+    try:
+        out = asyncio.run(_run_loop(loop, uuid.uuid4(), text="读一下 a.py"))
+    finally:
+        p_nar.stop()
+        p_thr.stop()
+        p_seg.stop()
+        p_ac.stop()
+        scene_cap.stop()
+        ck.stop()
+        registry_patcher.stop()
+        _stop_loop(loop, patcher)
+
+    assert ck_m.called, "segment boundary must reach save_checkpoint (not TypeError)"
+    assert len(llm.calls) >= 3
+    joined = " ".join(
+        str(m.get("content") or "")
+        for call in llm.calls
+        for m in call["messages"]
+    )
+    assert "System auto-resume" in joined
+    assert "续跑后的答复" in (out or "")
+
+
+def test_no_write_ignored_nudge_force_final_stops_tools():
+    """no_write nudges must force_final; model cannot ignore them for many rounds."""
+    from backend.core.config import settings as _st
+
+    def _read(i):
+        return [
+            _chunk(
+                tool_call=_tc(f"r{i}", "file_read", {"path": f"f{i}.py"}),
+                finish="tool_calls",
+            )
+        ]
+
+    llm = _ScriptedLLMRespectTools(
+        [_read(i) for i in range(12)]
+        + [[_chunk(delta="审查结论：到此收束。", finish="stop")]]
+    )
+    loop, patcher = _make_loop(llm)
+    loop.max_iterations = 20
+    loop._execute_registered_tool = AsyncMock(return_value="ok")
+    registry_patcher = patch(
+        "backend.tools.registry.ToolRegistry.get",
+        return_value=SimpleNamespace(parameters={"type": "object", "properties": {}}),
+    )
+    registry_patcher.start()
+    patches = [
+        patch("backend.agent.tool_policy.scene_max_iterations", return_value=20),
+        patch.object(_st, "agent_auto_continue_max_segments", 1),
+        patch.object(_st, "agent_no_write_nudge_after", 4),
+        patch.object(_st, "agent_no_write_force_after", 2),
+        patch.object(_st, "agent_converge_nudge_after", 99),
+        patch.object(_st, "agent_soft_open_mode", True),
+        patch.object(_st, "agent_thrash_force_final_interactive", False),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = asyncio.run(
+            _run_loop(
+                loop,
+                uuid.uuid4(),
+                text="帮我审查 https://github.com/wu1w/tevarn 的逻辑 bug",
+            )
+        )
+    finally:
+        for p in reversed(patches):
+            p.stop()
+        registry_patcher.stop()
+        _stop_loop(loop, patcher)
+
+    # first_at=4, grace=2 → force after 6 read rounds; +1 final LLM
+    assert len(llm.calls) <= 8
+    assert "不应再来" not in (out or "")
+    last_tools = llm.calls[-1].get("tools")
+    assert last_tools in (None, [])
+    assert getattr(loop, "last_exit_reason", "") == "no_write_ignored"

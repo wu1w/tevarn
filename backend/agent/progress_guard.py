@@ -453,6 +453,37 @@ def converge_nudge_text(*, tool_rounds: int) -> str:
     )
 
 
+def ignored_nudge_action(
+    *,
+    current: int,
+    first_at: int,
+    grace: int,
+    every: int = 0,
+    even_only: bool = False,
+) -> str:
+    """Return ``none`` / ``nudge`` / ``force_final`` for a repeating soft nudge.
+
+    Soft-open used to re-nudge forever (no_write every even round; converge
+    every 10). ``force_final`` once ``current >= first_at + grace`` so the
+    model cannot ignore the first nudge for many extra rounds.
+    """
+    cur = int(current or 0)
+    first = int(first_at or 0)
+    if first <= 0 or cur < first:
+        return "none"
+    g = max(1, int(grace or 1))
+    if cur >= first + g:
+        return "force_final"
+    if even_only:
+        if cur == first or cur % 2 == 0:
+            return "nudge"
+        return "none"
+    ev = max(1, int(every or 1))
+    if cur == first or ((cur - first) % ev == 0):
+        return "nudge"
+    return "none"
+
+
 def filter_tools_deliver_only(
     tools: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]] | None:

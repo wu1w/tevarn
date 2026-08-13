@@ -194,6 +194,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 return None
         except Exception:
             pass
+        if role == "assistant":
+            try:
+                from backend.agent.user_channel import content_for_chat_persist
+
+                content = content_for_chat_persist(
+                    content, has_tool_calls=bool(tool_calls)
+                )
+            except Exception:
+                pass
         store = getattr(self, "message_store", None)
         if store is not None:
             return await store.save_message(
@@ -3477,6 +3486,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                                 break
                     except Exception:
                         pass
+                    from backend.agent.checkpoint import recorder_run_id as _rid_of
+
                     await save_checkpoint(
                         session_id,
                         segment=_segment,
@@ -3484,7 +3495,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         mode=mode,
                         note="auto-continue segment boundary",
                         extra={"goal_complete": bool(g_chk and g_chk.is_complete())},
-                        run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
+                        run_id=_rid_of(getattr(self, "_run_recorder", None)),
                     )
                     if goal_mode:
                         await save_goal_to_db(session_id)
@@ -3805,9 +3816,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     "role": "assistant",
                     "content": _llm_body if _llm_body else None,
                 }
-                _rc = (accumulated_reasoning or "").strip()
-                if _rc:
-                    assistant_msg["reasoning_content"] = _rc
+                _reasoning_keep = (accumulated_reasoning or "").strip()
+                if _reasoning_keep:
+                    assistant_msg["reasoning_content"] = _reasoning_keep
                 from backend.services.llm.openai_compatible import (
                     tool_call_to_openai_message,
                 )
@@ -4159,7 +4170,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     # 不再把完整 goal summary 拼进 assistant 正文（续跑 prompt 会带）
                     try:
                         await save_goal_to_db(session_id)
-                        from backend.agent.checkpoint import save_checkpoint
+                        from backend.agent.checkpoint import (
+                            recorder_run_id,
+                            save_checkpoint,
+                        )
 
                         await save_checkpoint(
                             session_id,
@@ -4167,7 +4181,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             iteration=_total_iters,
                             mode=mode,
                             note="segment_tool_rounds_exhausted",
-                            run_id=str(_rc.run_id) if _rc is not None and _rc.run_id else None,
+                            run_id=recorder_run_id(getattr(self, "_run_recorder", None)),
                         )
                     except Exception as _silent_e:
                         logger.debug("suppressed: %s", _silent_e, exc_info=False)
