@@ -591,8 +591,8 @@ class ManageMcp(BaseTool):
             if isinstance(_rt, dict):
                 _rt = dict(_rt)
                 _rt["note"] = (
-                    "MCP 已热同步；本轮工具表可能仍是同步前快照。"
-                    "新 mcp_* 将在下一轮对话自动可用；也可再发一条消息刷新。"
+                    "MCP 已热同步；下一轮 LLM 调用会重建 mcp_* 工具表。"
+                    "无需新开对话。"
                 )
             return _rt
         except Exception as e:

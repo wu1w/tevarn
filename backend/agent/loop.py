@@ -169,6 +169,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._thrash_force_final_override = None
         self._pseudo_tool_leak_streak = 0
         self._terminal_event_emitted = False
+        try:
+            from backend.mcp_hub.service import tools_dirty_generation
+
+            self._mcp_tools_gen = tools_dirty_generation()
+        except Exception:
+            self._mcp_tools_gen = 0
 
     # ── Batch3 port helpers（优先 message_store / tool_executor）─────────
     async def _save_message(
@@ -3763,18 +3769,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _rc = (accumulated_reasoning or "").strip()
                 if _rc:
                     assistant_msg["reasoning_content"] = _rc
+                from backend.services.llm.openai_compatible import (
+                    tool_call_to_openai_message,
+                )
+
                 assistant_tool_calls = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments, ensure_ascii=False)
-                            if not isinstance(tc.arguments, str)
-                            else tc.arguments,
-                        },
-                    }
-                    for tc in tool_calls
+                    tool_call_to_openai_message(tc) for tc in tool_calls
                 ]
                 assistant_msg["tool_calls"] = assistant_tool_calls
                 messages.append(assistant_msg)
@@ -3882,53 +3882,60 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 messages = _tr_state.messages
                 tools = _tr_state.tools
                 enabled_tools_filter = _tr_state.enabled_tools_filter
-                # P0: MCP reload mid-run → merge live mcp_* into next LLM tool surface
+                # P0: MCP reload mid-run → rebuild LLM tool schemas from registry
                 try:
-                    from backend.mcp_hub.service import consume_tools_dirty
+                    from backend.mcp_hub.service import tools_dirty_generation
                     from backend.agent.tool_policy import live_mcp_tool_names
-                    if consume_tools_dirty():
+
+                    _mcp_gen = tools_dirty_generation()
+                    if _mcp_gen > int(getattr(self, "_mcp_tools_gen", 0) or 0):
+                        self._mcp_tools_gen = _mcp_gen
                         live = live_mcp_tool_names()
-                        if live:
-                            if enabled_tools_filter is not None:
-                                enabled_tools_filter = sorted(
-                                    set(enabled_tools_filter) | set(live) | {"manage_mcp"}
-                                )
-                            # rebuild schema names into tools list via skill manager if available
-                            try:
-                                sm = getattr(self, "skill_manager", None) or getattr(
-                                    self, "tool_executor", None
-                                )
-                                if sm is not None and hasattr(sm, "get_openai_tools"):
-                                    tools = sm.get_openai_tools(
-                                        None
-                                        if enabled_tools_filter is None
-                                        else enabled_tools_filter
-                                    )
-                                elif isinstance(tools, list) and tools:
-                                    have = {
-                                        (t.get("function") or {}).get("name")
-                                        for t in tools
-                                        if isinstance(t, dict)
-                                    }
-                                    # leave schema rebuild to next resolve; filter is enough for allow
-                                    _ = have
-                            except Exception:
-                                pass
-                            messages.append(
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "[MCP] 工具表已热更新，新的 mcp_* 已并入本轮可用列表："
-                                        + ", ".join(live[:24])
-                                        + ("…" if len(live) > 24 else "")
-                                    ),
-                                }
+                        if enabled_tools_filter is not None and live:
+                            enabled_tools_filter = sorted(
+                                set(enabled_tools_filter) | set(live) | {"manage_mcp"}
                             )
-                            logger.info(
-                                "MCP tools refreshed mid-run session=%s n=%s",
+                        try:
+                            rebuilt = await self._load_tools(
                                 session_id,
-                                len(live),
+                                enabled_skills,
+                                enabled_tools_filter,
+                                user_input=str(enriched_input or user_input or ""),
                             )
+                            from backend.agent.cap_tools import filter_tools_for_process
+
+                            rebuilt = filter_tools_for_process(
+                                rebuilt, getattr(self, "_kernel_process", None)
+                            )
+                            if rebuilt:
+                                tools = rebuilt
+                            else:
+                                logger.warning(
+                                    "MCP schema rebuild returned 0 tools; keeping previous list"
+                                )
+                        except Exception as _rb:
+                            logger.warning("MCP schema rebuild failed: %s", _rb)
+                        note_names = live[:24] if live else []
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": (
+                                    "[MCP] 工具表已热更新，下一轮 LLM 将使用当前 mcp_* 列表"
+                                    + (
+                                        "：" + ", ".join(note_names)
+                                        + ("…" if live and len(live) > 24 else "")
+                                        if note_names
+                                        else "（当前无已连接 MCP 工具）"
+                                    )
+                                ),
+                            }
+                        )
+                        logger.info(
+                            "MCP tools refreshed mid-run session=%s n=%s gen=%s",
+                            session_id,
+                            len(live),
+                            _mcp_gen,
+                        )
                 except Exception as _mcp_rf:
                     logger.debug("MCP tools refresh skip: %s", _mcp_rf)
                 _force_final_no_tools = _tr_state.force_final_no_tools

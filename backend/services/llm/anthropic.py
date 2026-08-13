@@ -361,18 +361,13 @@ class AnthropicService(LLMService):
                 **request_proxy_kwargs(url),
             ) as resp:
                 resp.raise_for_status()
-                async for line in resp.content:
-                    line = line.decode("utf-8").strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    if line == "data: [DONE]":
-                        continue
+                from .sse import split_sse_data_lines
 
-                    try:
-                        data = json.loads(line[6:])
-                    except json.JSONDecodeError:
-                        continue
+                sse_buf = ""
+                stream_done = False
 
+                def _handle_event(data: dict[str, Any]) -> LLMChunk | None:
+                    nonlocal accumulated_content, stream_usage, stream_done
                     event_type = data.get("type", "")
 
                     # 用量与缓存命中（T4）：input/cache_* 在 message_start，
@@ -395,7 +390,7 @@ class AnthropicService(LLMService):
                             text = delta.get("text", "")
                             if text:
                                 accumulated_content += text
-                                yield LLMChunk(message_id=message_id, delta=text)
+                                return LLMChunk(message_id=message_id, delta=text)
 
                         elif delta_type == "input_json_delta":
                             partial_json = delta.get("partial_json", "")
@@ -435,17 +430,51 @@ class AnthropicService(LLMService):
                                 arguments=args,
                             )
                             tool_calls_list.append(tc)
-                            yield LLMChunk(message_id=message_id, delta="", tool_call=tc)
+                            return LLMChunk(message_id=message_id, delta="", tool_call=tc)
 
                     elif event_type == "message_stop":
+                        stream_done = True
                         finish_reason = "tool_calls" if tool_calls_list else "stop"
-                        yield LLMChunk(
+                        return LLMChunk(
                             message_id=message_id,
                             delta="",
                             finish_reason=finish_reason,
                             usage=stream_usage,
                         )
+                    return None
+
+                async for raw in resp.content:
+                    chunk = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
+                    text_s = sse_buf + chunk.decode("utf-8", errors="replace")
+                    sse_buf, payloads = split_sse_data_lines(text_s)
+                    for payload_s in payloads:
+                        if not payload_s or payload_s == "[DONE]":
+                            continue
+                        try:
+                            data = json.loads(payload_s)
+                        except json.JSONDecodeError:
+                            continue
+                        out = _handle_event(data)
+                        if out is not None:
+                            yield out
+                        if stream_done:
+                            break
+                    if stream_done:
                         break
+                if not stream_done and (sse_buf or "").strip():
+                    _, payloads = split_sse_data_lines(sse_buf + "\n")
+                    for payload_s in payloads:
+                        if not payload_s or payload_s == "[DONE]":
+                            continue
+                        try:
+                            data = json.loads(payload_s)
+                        except json.JSONDecodeError:
+                            continue
+                        out = _handle_event(data)
+                        if out is not None:
+                            yield out
+                        if stream_done:
+                            break
 
         except Exception as e:
             logger.error(f"Anthropic chat error: {e}")
