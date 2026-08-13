@@ -141,7 +141,7 @@ _BUILTIN_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "文件匹配模式，如 '*.py' 或 '**/*.json'",
+                "description": "文件匹配模式，如 '*.py'、'**/*.json'、'**/*.{ts,js,py}'",
             },
         },
         "required": ["pattern"],
@@ -352,7 +352,7 @@ class ToolRegistry:
                 "name": "glob",
                 "description": (
                     "使用通配符模式查找工作区内的文件。"
-                    "支持 '*.py'、'**/*.json' 等模式，可用于快速定位文件。"
+                    "支持 '*.py'、'**/*.json'、'**/*.{ts,js,py}' 等模式，可用于快速定位文件。"
                 ),
                 "type": "glob",
                 "config": {"base_path": "./workspace"},

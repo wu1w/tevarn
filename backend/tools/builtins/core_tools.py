@@ -189,7 +189,8 @@ class GlobTool(_BuiltinToolBase):
         super().__init__(
             name="glob",
             description=(
-                "按通配符列文件路径（如 **/*.py、frontend/**/*.tsx）。"
+                "按通配符列文件路径（如 **/*.py、**/*.{ts,js,py}、frontend/**/*.tsx）。"
+                "从 workspace 根递归搜索，含子目录克隆（不必先猜 tevarn-src/ 前缀）。"
                 "不知道确切路径时先 glob 再 file_read。"
                 "pattern 必填；结果过多时收窄 pattern。"
             ),
