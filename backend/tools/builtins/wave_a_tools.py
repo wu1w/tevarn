@@ -127,10 +127,15 @@ class CapabilityStatusTool(BaseTool):
         def has(mod: str) -> bool:
             return iu.find_spec(mod) is not None
 
+        from backend.services.visio_preview import converter_status
+
+        visio = converter_status()
         checks = {
             "doc_pdf": has("fitz") or has("pypdf") or has("PyPDF2"),
             "doc_docx": has("docx"),
             "doc_xlsx": has("openpyxl"),
+            "doc_visio_vsdx": True,
+            "doc_visio_vsd": bool(visio.get("binary_vsd_ready")),
             "tts_edge": has("edge_tts"),
             "image_pil": has("PIL"),
             "playwright": has("playwright"),
@@ -151,6 +156,8 @@ class CapabilityStatusTool(BaseTool):
             install_hints.append("pip install openpyxl")
         if not checks["tts_edge"]:
             install_hints.append("pip install edge-tts")
+        if not checks["doc_visio_vsd"]:
+            install_hints.append(str(visio.get("install_hint") or "install LibreOffice for .vsd"))
 
         return json.dumps(
             {
@@ -181,8 +188,9 @@ class DocReadTool(BaseTool):
         super().__init__(
             name="doc_read",
             description=(
-                "读取 PDF/DOCX/XLSX/TXT/MD 文档正文。支持 path 或 url。"
+                "读取 PDF/DOCX/XLSX/TXT/MD/Visio(VSD/VSDX) 文档正文。支持 path 或 url。"
                 "大文件用 offset/limit 分页（按行或字符块）。"
+                "Visio 图会按页提取形状文字；旧版 .vsd 无 LibreOffice 时返回可打印字符串。"
             ),
             parameters={
                 "type": "object",
@@ -191,7 +199,7 @@ class DocReadTool(BaseTool):
                     "url": {"type": "string", "description": "远程 URL（下载后解析）"},
                     "format": {
                         "type": "string",
-                        "enum": ["auto", "pdf", "docx", "xlsx", "txt", "md"],
+                        "enum": ["auto", "pdf", "docx", "xlsx", "txt", "md", "visio"],
                         "default": "auto",
                     },
                     "offset": {"type": "integer", "default": 0, "description": "起始行（0-based）"},
@@ -261,6 +269,10 @@ class DocReadTool(BaseTool):
             ".csv": "txt",
             ".json": "txt",
             ".log": "txt",
+            ".vsd": "visio",
+            ".vsdx": "visio",
+            ".vsdm": "visio",
+            ".vdx": "visio",
         }.get(ext, "txt")
 
     def _download(self, url: str) -> Path | str:
@@ -333,6 +345,11 @@ class DocReadTool(BaseTool):
                     parts.append("\t".join("" if c is None else str(c) for c in row))
             wb.close()
             return "\n".join(parts)
+        if fmt == "visio":
+            from backend.services.visio_preview import pages_as_text, preview_visio
+
+            preview = preview_visio(path)
+            return pages_as_text(preview)
         return path.read_text(encoding="utf-8", errors="replace")
 
 

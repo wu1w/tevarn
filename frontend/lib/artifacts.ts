@@ -8,7 +8,7 @@ export interface ChatArtifact {
   name: string;
   source: 'tool' | 'content' | 'link';
   /** 可选 mime 提示 */
-  kind?: 'image' | 'table' | 'text' | 'pdf' | 'html' | 'markdown' | 'docx' | 'pptx' | 'other';
+  kind?: 'image' | 'table' | 'text' | 'pdf' | 'html' | 'markdown' | 'docx' | 'pptx' | 'visio' | 'other';
 }
 
 const WRITE_TOOLS = new Set([
@@ -53,6 +53,10 @@ const EXT_KIND: Record<string, ChatArtifact['kind']> = {
   pptx: 'pptx',
   ppt: 'pptx',
   doc: 'docx',
+  vsd: 'visio',
+  vsdx: 'visio',
+  vsdm: 'visio',
+  vdx: 'visio',
 };
 
 function basename(p: string): string {
@@ -190,7 +194,7 @@ function extractBarePaths(content: string, map: Map<string, ChatArtifact>) {
   }
   // 纯文件名带常见生成扩展
   const bare =
-    /(?:^|[\s"'`])((?:[\w\u4e00-\u9fff.-]+)\.(?:xlsx|xls|csv|pptx|ppt|docx|doc|pdf|png|jpg|jpeg|webp|gif|md|txt|json|html|htm))(?=[\s"'`.,;:!?)]|$)/gi;
+    /(?:^|[\s"'`])((?:[\w\u4e00-\u9fff.-]+)\.(?:xlsx|xls|csv|pptx|ppt|docx|doc|pdf|png|jpg|jpeg|webp|gif|md|txt|json|html|htm|vsd|vsdx|vsdm|vdx))(?=[\s"'`.,;:!?)]|$)/gi;
   while ((m = bare.exec(content)) !== null) {
     const p = normalizeArtifactPath(m[1]);
     if (p) pushUnique(map, { path: p, name: basename(p), source: 'content', kind: kindOf(p) });
@@ -251,7 +255,8 @@ export function artifactPreviewable(kind: ChatArtifact['kind'] | undefined): boo
     kind === 'html' ||
     kind === 'markdown' ||
     kind === 'docx' ||
-    kind === 'pptx'
+    kind === 'pptx' ||
+    kind === 'visio'
   );
 }
 

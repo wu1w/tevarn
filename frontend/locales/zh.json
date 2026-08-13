@@ -374,6 +374,8 @@
   "chat.openSystemFail": "无法用系统应用打开，请尝试下载",
   "chat.previewSlide": "幻灯片 {n}",
   "chat.previewPptxHint": "PPT 预览为提取文本；完整版式请下载后打开",
+  "chat.previewVisioPage": "页 {n}",
+  "chat.previewVisioHint": "Visio 预览由 Tevarn 内置渲染。旧版 .vsd 若无图形，请安装 LibreOffice Draw。",
   "chat.sessionFiles": "本会话文件 ({n})",
   "chat.uploadOkAttached": "已添加 {n} 个附件",
   "common.close": "关闭",

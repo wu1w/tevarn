@@ -11,6 +11,7 @@ import {
   loadXlsxTables,
   parseCsvText,
   sanitizeHtmlForPreview,
+  sanitizeSvgForPreview,
   type SheetTable,
 } from '@/lib/filePreviewLoaders';
 import { useT } from '@/stores/localeStore';
@@ -82,6 +83,25 @@ async function resolveAbsPath(rel: string): Promise<{ abs_path: string; exists: 
   return res.json();
 }
 
+type VisioPage = { name: string; svg?: string | null; text: string };
+
+async function fetchVisioPreview(path: string): Promise<{
+  pages: VisioPage[];
+  hint?: string | null;
+  pdf_available?: boolean;
+}> {
+  const rel = toRelPath(path);
+  const token = getToken();
+  const res = await fetch(`${apiBase()}/files/visio-preview?path=${encodeURIComponent(rel)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 async function openViaBackend(rel: string): Promise<boolean> {
   const token = getToken();
   const res = await fetch(`${apiBase()}/files/open?path=${encodeURIComponent(rel)}`, {
@@ -100,7 +120,8 @@ type PreviewState =
   | { type: 'text'; text: string }
   | { type: 'table'; sheets: SheetTable[]; active: number }
   | { type: 'pptx'; slides: string[] }
-  | { type: 'docx'; html: string };
+  | { type: 'docx'; html: string }
+  | { type: 'visio'; pages: VisioPage[]; hint?: string | null };
 
 function resolveKind(artifact: ChatArtifact): NonNullable<ChatArtifact['kind']> {
   if (artifact.kind && artifact.kind !== 'other') return artifact.kind;
@@ -131,6 +152,10 @@ function resolveKind(artifact: ChatArtifact): NonNullable<ChatArtifact['kind']> 
     doc: 'docx',
     pptx: 'pptx',
     ppt: 'pptx',
+    vsd: 'visio',
+    vsdx: 'visio',
+    vsdm: 'visio',
+    vdx: 'visio',
   };
   return map[ext] || 'other';
 }
@@ -251,6 +276,36 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
           const slides = await loadPptxSlides(buf);
           if (cancelled) return;
           setPreview({ type: 'pptx', slides });
+        } else if (k === 'visio') {
+          const data = await fetchVisioPreview(artifact.path);
+          if (cancelled) return;
+          const pages = (data.pages || []).map((p) => ({
+            name: p.name || 'Page',
+            text: p.text || '',
+            svg: p.svg ? sanitizeSvgForPreview(p.svg) : null,
+          }));
+          const hasSvg = pages.some((p) => Boolean(p.svg));
+          if (!hasSvg && data.pdf_available) {
+            const rel = toRelPath(artifact.path);
+            const token = getToken();
+            const pdfRes = await fetch(
+              `${apiBase()}/files/visio-preview?path=${encodeURIComponent(rel)}&as=pdf`,
+              { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+            );
+            if (pdfRes.ok) {
+              const blob = await pdfRes.blob();
+              if (cancelled) return;
+              const url = URL.createObjectURL(blob);
+              urls.push(url);
+              setPreview({ type: 'pdf', url });
+              return;
+            }
+          }
+          if (!pages.length) {
+            setError(t('chat.previewUnsupported'));
+            return;
+          }
+          setPreview({ type: 'visio', pages, hint: data.hint || null });
         } else {
           try {
             const f = await readFile(rel);
@@ -561,6 +616,31 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
               </div>
             ))}
             <p className="text-[10px] text-foreground-dim">{t('chat.previewPptxHint')}</p>
+          </div>
+        )}
+
+        {!loading && !error && preview.type === 'visio' && (
+          <div className="space-y-4" data-testid="visio-preview">
+            {preview.pages.map((page, i) => (
+              <div key={page.name + i} className="rounded-xl border border-border-subtle bg-elevated-bg/40 p-3">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-foreground-dim">
+                  {page.name || t('chat.previewVisioPage').replace('{n}', String(i + 1))}
+                </div>
+                {page.svg ? (
+                  <div
+                    className="overflow-auto rounded-lg border border-border-subtle bg-white p-1"
+                    dangerouslySetInnerHTML={{ __html: page.svg }}
+                  />
+                ) : (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground-muted">
+                    {page.text}
+                  </pre>
+                )}
+              </div>
+            ))}
+            <p className="text-[10px] text-foreground-dim">
+              {preview.hint || t('chat.previewVisioHint')}
+            </p>
           </div>
         )}
       </div>
