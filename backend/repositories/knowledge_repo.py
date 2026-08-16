@@ -27,8 +27,14 @@ class DocumentRepository(BaseRepository):
         raise NotImplementedError
 
     @abstractmethod
-    async def list_by_user(self, user_id: uuid.UUID) -> list[Any]:
-        """列出当前用户可见的文档（含全局共享）"""
+    async def list_by_user(
+        self,
+        user_id: uuid.UUID,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[Any]:
+        """列出当前用户可见的文档（含全局共享）。limit=None 表示不截断。"""
         raise NotImplementedError
 
     @abstractmethod

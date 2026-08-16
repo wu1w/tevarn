@@ -911,8 +911,17 @@ export async function deleteCronJob(cronId: string): Promise<{ deleted: boolean 
 
 // ====== Knowledge APIs ======
 
-export async function getDocuments(): Promise<Document[]> {
-  const res = await api.get('/knowledge/documents');
+export async function getDocuments(opts?: {
+  limit?: number;
+  offset?: number;
+}): Promise<Document[]> {
+  // Backend default is 100; pass max (500) so alpha knowledge center shows full list.
+  // Callers can still page via { limit, offset } when UI grows a "load more".
+  const limit = opts?.limit ?? 500;
+  const offset = opts?.offset ?? 0;
+  const res = await api.get('/knowledge/documents', {
+    params: { limit, offset },
+  });
   return res.data;
 }
 

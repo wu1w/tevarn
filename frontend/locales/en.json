@@ -2043,7 +2043,6 @@
   "chatDisplay.errorPrefix": "Error: {msg}",
   "settings.deleteProvider": "Delete provider \"{name}\"?",
   "settings.deleteProviderTitle": "Delete provider",
-  "desktop.confirmTitle": "Please confirm",
   "api.connectFailed": "Cannot connect to backend ({base}{path}). Ensure Tevarn has started.",
   "api.notFound": "API not found (404).",
   "api.badGateway": "Backend temporarily unavailable (502). Please try again later.",

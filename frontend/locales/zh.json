@@ -2043,7 +2043,6 @@
   "chatDisplay.errorPrefix": "错误：{msg}",
   "settings.deleteProvider": "删除供应商「{name}」？",
   "settings.deleteProviderTitle": "删除供应商",
-  "desktop.confirmTitle": "请确认",
   "api.connectFailed": "无法连接后端（{base}{path}）。请确认 Tevarn 已启动。",
   "api.notFound": "接口不存在（404）。",
   "api.badGateway": "后端暂时不可用（502），请稍后重试。",
