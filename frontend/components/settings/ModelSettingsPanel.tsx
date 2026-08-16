@@ -33,6 +33,7 @@ import {
 import { Setting } from '@/types';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
+import { useConfirm } from '@/components/desktop/ConfirmDialog';
 
 function mapVal(settings: Setting[], key: string, fallback = ''): string {
   const s = settings.find((x) => x.key === key);
@@ -66,7 +67,8 @@ export interface ModelSettingsPanelProps {
   onSettingsRefetch: () => Promise<void> | void;
 }
 
-export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSettingsPanelProps) {
+export function ModelSettingsPanel({
+  const { confirm, ConfirmDialogComponent } = useConfirm(); settings, onSettingsRefetch }: ModelSettingsPanelProps) {
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
 
@@ -542,9 +544,12 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
   };
 
   const handleDeleteProvider = async (providerId: string, name: string) => {
-    if (!window.confirm(`Delete provider 「${name}」?`)) {
-      return;
-    }
+    const ok = await confirm(
+      t('settings.deleteProvider').replace('{name}', name),
+      t('settings.deleteProviderTitle'),
+      'danger',
+    );
+    if (!ok) return;
     setDeletingId(providerId);
     try {
       const res = await deleteCatalogProvider(providerId);
@@ -1455,6 +1460,7 @@ export function ModelSettingsPanel({ settings, onSettingsRefetch }: ModelSetting
           </button>
         </div>
       </section>
+      {ConfirmDialogComponent}
     </div>
   );
 }

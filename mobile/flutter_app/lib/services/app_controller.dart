@@ -3301,8 +3301,12 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// User-triggered reconnect (always toast).
+  /// User-triggered reconnect. Ignore rapid taps while busy (ANR guard).
   Future<void> forceReconnect() async {
+    if (_reconnectBusy || pathBusy) {
+      showToast('正在重连，请稍候…');
+      return;
+    }
     showToast('正在重试连接…');
     islandLive = true;
     islandText = '重连中';
@@ -3597,7 +3601,7 @@ class AppController extends ChangeNotifier {
     var ok = false;
     try {
       ok = await _tryAutoReconnectOnce(reason: reason)
-          .timeout(const Duration(seconds: 12), onTimeout: () => false);
+          .timeout(const Duration(seconds: 8), onTimeout: () => false);
     } catch (_) {
       ok = false;
     } finally {
@@ -3611,6 +3615,13 @@ class AppController extends ChangeNotifier {
       } else {
         _lastReconnectFailAt = DateTime.now();
         _reconnectFailStreak = (_reconnectFailStreak + 1).clamp(0, 6);
+        if (state['authenticated'] == true || state['pc_connected'] == true) {
+          state = {
+            ...state,
+            'authenticated': false,
+            'pc_connected': false,
+          };
+        }
         if (!_offlineToastShown || reason == 'manual') {
           _offlineToastShown = true;
           showToast('PC 不可达 · 已保留本机缓存，可稍后重试');
@@ -3651,7 +3662,7 @@ class AppController extends ChangeNotifier {
             password: formPass.isEmpty ? null : formPass,
             claim: reason == 'boot' || reason == 'manual',
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 8));
       if (isOk(r) && (r['authenticated'] == true || r['pc_connected'] == true)) {
         final b = r['base_url']?.toString();
         if (b != null && b.isNotEmpty) {

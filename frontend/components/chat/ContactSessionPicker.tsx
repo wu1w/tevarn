@@ -14,6 +14,7 @@ import type { Session } from '@/types';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useZh } from '@/hooks/useZh';
 import { useToastStore } from '@/stores/toastStore';
+import { useConfirm } from '@/components/desktop/ConfirmDialog';
 
 export type ContactSessionItem = {
   id: string;
@@ -59,6 +60,7 @@ export function ContactSessionPicker({
 }) {
   const zh = useZh();
   const addToast = useToastStore((s) => s.addToast);
+  const { confirm, ConfirmDialogComponent } = useConfirm();
   const sessionTitles = useSessionStore((s) => s.sessionTitles);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ContactSessionItem[]>([]);
@@ -173,10 +175,12 @@ export function ContactSessionPicker({
       e.stopPropagation();
       if (!sessionId || deletingId) return;
 
-      const ok = window.confirm(
+      const ok = await confirm(
         zh
           ? `删除会话 ${sessionId.slice(0, 8)}…？消息将不可恢复。`
           : `Delete session ${sessionId.slice(0, 8)}…? Messages cannot be recovered.`,
+        zh ? '删除会话' : 'Delete session',
+        'danger',
       );
       if (!ok) return;
 
@@ -350,6 +354,7 @@ export function ContactSessionPicker({
           </div>
         </div>
       ) : null}
+      {ConfirmDialogComponent}
     </div>
   );
 }

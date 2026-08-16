@@ -25,10 +25,10 @@ const variantStyles = {
  */
 export function ConfirmDialog({
   open,
-  title = 'desktop._e98',
+  title = 'Please confirm',
   message,
-  confirmText = 'common.confirm',
-  cancelText = 'contextDash.cancel',
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
   variant = 'danger',
   onConfirm,
   onCancel,
@@ -94,7 +94,7 @@ export function useConfirm() {
 
   const confirm = (
     message: string,
-    title = 'desktop._e98',
+    title = 'Please confirm',
     variant: 'danger' | 'warning' | 'default' = 'danger'
   ): Promise<boolean> => {
     return new Promise((resolve) => {

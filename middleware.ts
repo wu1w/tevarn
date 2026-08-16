@@ -1,3 +1,4 @@
+/** LEGACY root middleware — active proxy lives under frontend/. */
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 

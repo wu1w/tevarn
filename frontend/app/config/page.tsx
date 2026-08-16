@@ -22,6 +22,8 @@ export default function ConfigPage() {
   const t = useT();
   const [activeTab, setActiveTab] = useState<TabKey>('sys_prompt');
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(true);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const configStore = useConfigStore();
   const currentSession = useSessionStore((s) => s.currentSession);
   const updateSessionConfig = useSessionStore((s) => s.updateConfig);
@@ -35,9 +37,28 @@ export default function ConfigPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSession?.id]);
 
-  // 加载技能列表
+  // 加载技能列表（显式 loading / error，避免静默失败）
   useEffect(() => {
-    getSkills().then((data) => setSkills(Array.isArray(data) ? data : [])).catch(console.error);
+    let cancelled = false;
+    setSkillsLoading(true);
+    setSkillsError(null);
+    getSkills()
+      .then((data) => {
+        if (cancelled) return;
+        setSkills(Array.isArray(data) ? data : []);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        setSkillsError(msg || 'failed to load skills');
+        console.error(e);
+      })
+      .finally(() => {
+        if (!cancelled) setSkillsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSave = async () => {
@@ -76,6 +97,14 @@ export default function ConfigPage() {
     <div className="p-6">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">{t('nav.config')}</h1>
+        {skillsLoading ? (
+          <p className="mb-3 text-sm text-foreground-dim">{t('ui._e137')}</p>
+        ) : null}
+        {skillsError ? (
+          <p className="mb-3 text-sm text-red-500" role="alert">
+            {skillsError}
+          </p>
+        ) : null}
         <div className="flex items-center gap-3">
           {configStore.saved && (
             <span className="text-sm text-success-text">{t('channels.saved')}</span>

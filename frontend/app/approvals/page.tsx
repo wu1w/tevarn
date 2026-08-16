@@ -87,7 +87,7 @@ export default function ApprovalsPage() {
       const [a, d] = await Promise.all([getKernelEscalations('approved'), getKernelEscalations('denied')]);
       return [...a.escalations, ...d.escalations]
         .sort((x, y) => (y.resolved_at ?? 0) - (x.resolved_at ?? 0))
-        .slice(0, 10);
+        .slice(0, 40);
     },
     staleTime: 15_000,
     retry: 1,
@@ -129,7 +129,7 @@ export default function ApprovalsPage() {
     () =>
       [...(appliedProp.data?.proposals ?? []), ...(rejectedProp.data?.proposals ?? [])]
         .sort((a, b) => parseTs(b.created_at) - parseTs(a.created_at))
-        .slice(0, 10),
+        .slice(0, 40),
     [appliedProp.data?.proposals, rejectedProp.data?.proposals],
   );
   const idName = (id: string) =>

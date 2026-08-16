@@ -159,15 +159,15 @@ function formatApiError(error: {
 
   if (!error.response) {
     if (error.code === 'ECONNABORTED') return t('api._e5');
-    return `Cannot connect to backend (${base}${path})。Ensure the app has started, or restart Takton.`;
+    return t('api._e8') + ` (${base}${path})`;
   }
 
-  if (status === 404) return 'API not found (404)';
+  if (status === 404) return t('api._e8') + ' (404)';
   if (status === 403) return t('api._e6');
   if (status === 429) return t('api._e7');
-  if (status === 502) return 'Backend temporarily unavailable (502)，Please try again later';
+  if (status === 502) return t('api._e5');
   if (status && status >= 500) {
-    return `Server error (${status})${path ? `：${path}` : ''}`;
+    return t('api._e8') + ` (${status})`;
   }
 
   return error.message || t('api._e8');
@@ -180,7 +180,7 @@ api.interceptors.response.use(
     const ct = String(response.headers?.['content-type'] || '');
     if (ct.includes('text/html') || (typeof response.data === 'string' && response.data.includes('<!DOCTYPE'))) {
       const err = new Error('API returned HTML instead of JSON');
-      useToastStore.getState().addToast('API address misconfigured — restart Takton', 'error');
+      useToastStore.getState().addToast(t('api._e4'), 'error');
       return Promise.reject(err);
     }
     return response;

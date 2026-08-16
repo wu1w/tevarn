@@ -32,9 +32,9 @@ impl TevarnClient {
                 || s.base_url.is_empty()
         });
         let http = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .connect_timeout(Duration::from_secs(8))
-            .pool_idle_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(12))
+            .connect_timeout(Duration::from_secs(3))
+            .pool_idle_timeout(Duration::from_secs(15))
             .build()
             .map_err(|e| Error::Network(e.to_string()))?;
         Ok(Self {

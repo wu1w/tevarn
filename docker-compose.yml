@@ -15,8 +15,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "8090:8090"
     environment:
+      - TEVARN_APP_PORT=8090
       - TEVARN_DB_URL=sqlite+aiosqlite:////app/data/tevarn.db
       - TEVARN_QDRANT_URL=http://qdrant:6333
       - TEVARN_SINGLE_USER_MODE=${TEVARN_SINGLE_USER_MODE:-false}
@@ -40,7 +41,7 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         # 浏览器侧访问后端的地址（构建期内联）；对外部署改为实际域名/IP
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8090}
     ports:
       - "3000:3000"
     depends_on:

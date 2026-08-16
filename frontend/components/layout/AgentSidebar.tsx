@@ -24,6 +24,7 @@ import {
   type KernelIdentity,
 } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
+import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import { useQueryClient } from '@tanstack/react-query';
 
 const GRADS: Array<[string, string]> = [
@@ -145,6 +146,7 @@ type SearchHit = {
 };
 
 export function AgentSidebar() {
+  const { confirm, ConfirmDialogComponent } = useConfirm();
   const t = useT();
   const router = useRouter();
   const zh = useZh();
@@ -245,10 +247,12 @@ export function AgentSidebar() {
       e.preventDefault();
       e.stopPropagation();
       if (!groupId || deletingGroupId) return;
-      const ok = window.confirm(
+      const ok = await confirm(
         zh
           ? `删除项目组「${title || groupId.slice(0, 8)}」？\n仅移除侧栏聚合视图，员工工单不会删除。`
           : `Delete project group "${title || groupId.slice(0, 8)}"?\nOnly removes the board; inbox jobs stay.`,
+        zh ? '删除项目组' : 'Delete project group',
+        'danger',
       );
       if (!ok) return;
       setDeletingGroupId(groupId);
@@ -719,6 +723,7 @@ export function AgentSidebar() {
           </div>
         </>
       ) : null}
+      {ConfirmDialogComponent}
     </div>
   );
 }

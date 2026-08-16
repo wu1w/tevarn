@@ -252,7 +252,7 @@ def start_kernel_host() -> subprocess.Popen | None:
     return proc
 
 
-def start_backend(python: str, host: str = "127.0.0.1", port: int = 8000):
+def start_backend(python: str, host: str = "127.0.0.1", port: int = 8090):
     """启动后端 uvicorn 子进程"""
     env = os.environ.copy()
     env["TEVARN_APP_HOST"] = host

@@ -184,7 +184,7 @@ class HttpTevarnBridge extends TevarnBridge {
           return _post('/api/mobile/path/probe', a);
         case 'path_reconnect':
           return _post('/api/mobile/path/reconnect', a,
-              timeout: const Duration(seconds: 12), maxAttempts: 1);
+              timeout: const Duration(seconds: 8), maxAttempts: 1);
         case 'path_refresh':
           return _post('/api/mobile/path/refresh', a);
         case 'processes':
@@ -251,7 +251,7 @@ class HttpTevarnBridge extends TevarnBridge {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final r =
-            await _client.get(_u(path)).timeout(const Duration(seconds: 8));
+            await _client.get(_u(path)).timeout(const Duration(seconds: 5));
         return _parse(r);
       } catch (e) {
         lastErr = e;
@@ -269,7 +269,7 @@ class HttpTevarnBridge extends TevarnBridge {
   Future<Map<String, dynamic>> _post(
     String path,
     Map<String, dynamic> body, {
-    Duration timeout = const Duration(seconds: 12),
+    Duration timeout = const Duration(seconds: 8),
     int maxAttempts = 2,
   }) async {
     Object? lastErr;

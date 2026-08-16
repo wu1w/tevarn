@@ -1,3 +1,4 @@
+/** LEGACY: app entry is frontend/. Do not run next from repo root — use frontend/. */
 import type { NextConfig } from "next";
 
 // 打包时设置 NEXT_EXPORT=1 走纯静态导出（Electron 内置静态服务器托管，不依赖 next start）

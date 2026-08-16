@@ -2548,7 +2548,7 @@ async fn try_connect_best_pref(
                 st.client.auto_login().await
             }
         };
-        let login = match tokio::time::timeout(std::time::Duration::from_secs(5), login_fut).await {
+        let login = match tokio::time::timeout(std::time::Duration::from_secs(2), login_fut).await {
             Ok(r) => r,
             Err(_) => {
                 last_err = format!("login timeout · {url}");
@@ -3520,9 +3520,9 @@ async fn path_reconnect(
     State(st): State<AppState>,
     Json(body): Json<PathReconnectBody>,
 ) -> Json<Value> {
-    // Overall deadline: PC off must not freeze phone for minutes.
+    // Overall deadline ≤6s: stay under Android ANR when PC is offline.
     match tokio::time::timeout(
-        std::time::Duration::from_secs(12),
+        std::time::Duration::from_secs(6),
         path_reconnect_inner(st, body),
     )
     .await

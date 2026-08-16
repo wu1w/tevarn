@@ -133,14 +133,24 @@ export function summarizeToolResult(
   content: string | null | undefined,
   toolName?: string | null
 ): string {
-  if (!content) return toolName ? `${toolName} done` : t('chatDisplay._e9');
+  if (!content) {
+    return toolName
+      ? t('chatDisplay.toolDone').replace('{name}', toolName)
+      : t('chatDisplay._e9');
+  }
   const parsed = tryParseJson(content);
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     const o = parsed as Record<string, unknown>;
     if (typeof o.message === 'string' && o.message.trim()) return o.message.trim();
-    if (typeof o.error === 'string' && o.error.trim()) return `Error: ${o.error}`;
-    if (o.ok === true && toolName) return `${toolName} OK`;
-    if (o.ok === false && toolName) return `${toolName} failed`;
+    if (typeof o.error === 'string' && o.error.trim()) {
+      return t('chatDisplay.errorPrefix').replace('{msg}', o.error);
+    }
+    if (o.ok === true && toolName) {
+      return t('chatDisplay.toolOk').replace('{name}', toolName);
+    }
+    if (o.ok === false && toolName) {
+      return t('chatDisplay.toolFailed').replace('{name}', toolName);
+    }
     if (typeof o.status === 'string') return String(o.status);
   }
   const oneLine = content.replace(/\s+/g, ' ').trim();

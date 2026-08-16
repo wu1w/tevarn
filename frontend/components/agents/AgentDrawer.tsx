@@ -10,6 +10,7 @@ import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { useToastStore } from '@/stores/toastStore';
+import { useConfirm } from '@/components/desktop/ConfirmDialog';
 import {
   getIdentityMemory, transitionIdentity, setIdentityCapabilities,
   updateIdentityProfile,
@@ -38,6 +39,7 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
   onExitComplete?: () => void;
 }) {
   const addToast = useToastStore((s) => s.addToast);
+  const { confirm, ConfirmDialogComponent } = useConfirm();
   const [tab, setTab] = useState<TabId>('today');
   const [editCaps, setEditCaps] = useState(false);
   const [editProfile, setEditProfile] = useState(false);
@@ -585,7 +587,12 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
                         type="button"
                         disabled={busy}
                         onClick={async () => {
-                          if (!window.confirm(zh ? '废止这条记忆？注入时将不再使用。' : 'Retire this memory entry?')) return;
+                          const ok = await confirm(
+                            zh ? '废止这条记忆？注入时将不再使用。' : 'Retire this memory entry?',
+                            zh ? '废止记忆' : 'Retire memory',
+                            'danger',
+                          );
+                          if (!ok) return;
                           setBusy(true);
                           try {
                             await retireIdentityMemory(agent.id, m.id);
@@ -846,6 +853,7 @@ export function AgentDrawer({ agent, processes, zh, onClose, onChanged, open = t
             </div>
           )}
         </div>
+    {ConfirmDialogComponent}
     </DrawerShell>
   );
 }

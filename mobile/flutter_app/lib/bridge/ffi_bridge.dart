@@ -273,10 +273,24 @@ class FfiTevarnBridge extends TevarnBridge {
   @override
   String get bridgeKind => _kind;
 
+  /// Long path ops must not use sync FFI block_on on the UI isolate (Android ANR).
+  static const _longPathMethods = {
+    'path_reconnect',
+    'path_probe',
+    'path_refresh',
+    'pair_apply',
+    'pair_claim',
+    'connect',
+    'auto_login',
+  };
+
   @override
   Future<Map<String, dynamic>> call(String method,
       [Map<String, dynamic>? args]) async {
     if (_call == null || _free == null) return _http.call(method, args);
+    if (_longPathMethods.contains(method)) {
+      return _http.call(method, args);
+    }
     final mPtr = method.toNativeUtf8();
     final aPtr = jsonEncode(args ?? {}).toNativeUtf8();
     try {

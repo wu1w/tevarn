@@ -457,6 +457,11 @@ export default function UsagePage() {
   const summary =
     (cost as CostPanel).summary || (costQ.data as CostPanel | undefined)?.summary;
   const loading = costQ.isLoading || cacheQ.isLoading;
+  const loadError = costQ.isError || cacheQ.isError;
+  const errorMessage =
+    (costQ.error instanceof Error && costQ.error.message) ||
+    (cacheQ.error instanceof Error && cacheQ.error.message) ||
+    (zh ? '用量数据加载失败' : 'Failed to load usage data');
 
   const th: React.CSSProperties = {
     textAlign: 'left',
@@ -537,6 +542,42 @@ export default function UsagePage() {
           {zh ? '刷新' : 'Refresh'}
         </button>
       </div>
+
+      {loadError ? (
+        <div
+          role="alert"
+          style={{
+            marginBottom: 16,
+            padding: '12px 14px',
+            borderRadius: 10,
+            border: '1px solid color-mix(in srgb, var(--status-offline) 35%, transparent)',
+            background: 'color-mix(in srgb, var(--status-offline) 8%, transparent)',
+            color: 'var(--foreground)',
+            fontSize: 13,
+          }}
+        >
+          {zh ? '加载失败：' : 'Error: '}
+          {errorMessage}
+          <button
+            type="button"
+            onClick={() => {
+              void costQ.refetch();
+              void cacheQ.refetch();
+            }}
+            style={{
+              marginLeft: 12,
+              fontSize: 12,
+              padding: '4px 10px',
+              borderRadius: 6,
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--input-bg)',
+              cursor: 'pointer',
+            }}
+          >
+            {zh ? '重试' : 'Retry'}
+          </button>
+        </div>
+      ) : null}
 
       <div
         style={{
