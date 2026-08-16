@@ -428,6 +428,8 @@ async def bridge_invoke_tool(
         return {"ok": False, "output": "", "error": "name required"}
 
     args = dict(body.arguments or {})
+    args.pop("_tool_gate_passed", None)
+    args.pop("_tool_gate_internal", None)
     # inject identity context for skills that accept it
     args.setdefault("user_id", str(current_user.id))
     if body.session_id:
@@ -456,6 +458,11 @@ async def bridge_invoke_tool(
         if skill is None and hasattr(SkillRegistry, "get_skill"):
             skill = SkillRegistry.get_skill(name)
         if skill is not None:
+            from backend.kernel.tool_gate import enforce_tool_gate
+
+            args, gate_err = await enforce_tool_gate(name, args)
+            if gate_err:
+                return {"ok": False, "output": "", "error": gate_err}
             out = await skill.execute(**args)
             return {"ok": True, "output": str(out), "error": None}
     except TypeError as e:
@@ -481,6 +488,11 @@ async def bridge_invoke_tool(
         tools = await repo.list_all() if hasattr(repo, "list_all") else []
         match = next((t for t in tools if getattr(t, "name", None) == name), None)
         if match is not None:
+            from backend.kernel.tool_gate import enforce_tool_gate
+
+            args, gate_err = await enforce_tool_gate(name, args)
+            if gate_err:
+                return {"ok": False, "output": "", "error": gate_err}
             out = await ToolRegistry.execute_tool(match, args)
             return {"ok": not str(out).startswith("[Error]"), "output": str(out), "error": None}
     except Exception as e:  # noqa: BLE001

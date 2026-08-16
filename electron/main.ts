@@ -1174,6 +1174,7 @@ function postDesktopPermissionFromMain(
 
 /** P0-A: locate tevarn-kernel-host binary (docs/kernel-abi-v1.md). */
 function findKernelHostBin(): string | null {
+  // H-01: target/{release,debug} first (current ABI), then vendor; newest mtime wins.
   const fromEnv = process.env.TEVARN_KERNEL_HOST_BIN || process.env.TAKTON_KERNEL_HOST_BIN;
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
   const names =
@@ -1185,25 +1186,34 @@ function findKernelHostBin(): string | null {
           'takton-kernel-host',
         ]
       : ['tevarn-kernel-host', 'takton-kernel-host'];
-  const roots = [
-    path.join(ROOT_DIR, 'vendor', 'tevarn-kernel-host'),
-    path.join(ROOT_DIR, 'vendor', 'takton-kernel-host'),
-    path.join(ROOT_DIR, 'target', 'release'),
-    path.join(ROOT_DIR, 'target', 'debug'),
-  ];
-  if (!isDev) {
-    roots.unshift(path.join(process.resourcesPath, 'vendor', 'tevarn-kernel-host'));
-    roots.unshift(path.join(process.resourcesPath, 'tevarn-kernel-host'));
-    roots.unshift(path.join(process.resourcesPath, 'vendor', 'takton-kernel-host'));
-    roots.unshift(path.join(process.resourcesPath, 'takton-kernel-host'));
+  const roots: string[] = [];
+  // target first (dev / CI built binary has current ABI)
+  roots.push(path.join(ROOT_DIR, 'target', 'release'), path.join(ROOT_DIR, 'target', 'debug'));
+  roots.push(path.join(ROOT_DIR, 'vendor', 'tevarn-kernel-host'), path.join(ROOT_DIR, 'vendor', 'takton-kernel-host'));
+  if (!isDev && process.resourcesPath) {
+    roots.push(
+      path.join(process.resourcesPath, 'vendor', 'tevarn-kernel-host'),
+      path.join(process.resourcesPath, 'tevarn-kernel-host'),
+      path.join(process.resourcesPath, 'vendor', 'takton-kernel-host'),
+      path.join(process.resourcesPath, 'takton-kernel-host'),
+    );
   }
+  type Cand = { p: string; tier: number; mtime: number };
+  const cands: Cand[] = [];
   for (const dir of roots) {
     for (const name of names) {
       const p = path.join(dir, name);
-      if (fs.existsSync(p)) return p;
+      if (fs.existsSync(p)) {
+        const tier = p.includes(`${path.sep}target${path.sep}`) ? 0 : 1;
+        let mtime = 0;
+        try { mtime = -fs.statSync(p).mtimeMs; } catch { /* ignore */ }
+        cands.push({ p, tier, mtime });
+      }
     }
   }
-  return null;
+  if (!cands.length) return null;
+  cands.sort((a, b) => a.tier - b.tier || a.mtime - b.mtime);
+  return cands[0].p;
 }
 
 function kernelHostListening(listen: string): Promise<boolean> {

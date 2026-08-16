@@ -216,7 +216,12 @@ L0 Kernel（进程 / cap / 调度 / 隔离）████░░░░░░  ~45
 | **H-13** | 包市场生产密钥路径 | [PACKAGE_TRUST.md](./PACKAGE_TRUST.md) | H1 | ✅ |
 | **H-14** | host 卡死恢复稳态 | `restart_kernel_host` + 单测 | H1 | ✅ |
 
+> **Week 1–3 + 下一阶段 closeout（2026-08-15）**：Electron/start target-first；kernel-ci p0b/c/d + closeout fail-on-skip；mcp 经 mediate；isolation ledger-only；run_gate 在无 `_call` 时软跳过（OOTB 首聊不挂死）；HTTP/Bridge 剥伪造 gate flags。剩余：e2e 未进 CI；H-07 session lock 保留；2h soak 非默认门。
+
 > **H-07 / H-09「切片」说明**：调度权威与 isolation 逻辑已在默认路径；彻底去掉 session 锁 / OS 级 wait-reap 属 **0.6 P0 加深**，不阻塞 0.5.x 出口。
+
+> **Week 1–3 + 下一阶段 closeout（2026-08-16）**：Electron/start target-first + mtime；kernel-ci p0b/c/d fail-on-skip；mcp 经 mediate；isolation ledger-only；run_gate 在无 `_call` 时软跳过（OOTB 首聊不挂死）；HTTP/Bridge 剥伪造 gate flags + enforce。剩余：e2e 未进 CI；H-07 session lock 保留；2h soak 非默认门。
+
 
 ### 4.2 产品打磨（少而硬）
 

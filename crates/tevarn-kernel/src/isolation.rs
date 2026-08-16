@@ -1,9 +1,9 @@
 //! Isolation supervisor + sandbox profiles (P0-D).
 //!
-//! Policy + handle ledger, with **real OS process attach** for backends
-//! `local` / `os` / `auto`. Sandbox backends (`bwrap`, `job`, `firejail`)
-//! stay ledger-only until platform adapters land — but once an `os_pid` or
-//! `Child` is attached, reap/kill go through the kernel.
+//! `spawn()` is a **policy + handle ledger**. Real OS children are created
+//! only by `spawn_os` / `isolation_spawn_os`. Python `ComputerManager` owns
+//! default command execution — promoting `local` inside `spawn()` would
+//! double-exec and orphan a silent Child.
 
 use std::collections::HashMap;
 use std::process::{Child, Command, Stdio};
@@ -247,16 +247,16 @@ impl IsolationSupervisor {
         h
     }
 
-    /// Spawn: OS backends create a real child; sandbox backends ledger-only.
+    /// Spawn: **ledger-only**. Real OS children go through `spawn_os`.
+    ///
+    /// Python `ComputerManager` already executes the command. Promoting
+    /// `local|os|auto` here double-executes and orphans a silent Child.
     pub fn spawn(
         &mut self,
         process_id: &str,
         command: &str,
         backend: &str,
     ) -> Result<IsolationHandle, String> {
-        if Self::backend_is_os(backend) {
-            return self.spawn_os(process_id, command, backend);
-        }
         self.spawn_with_pid(process_id, command, backend, None)
     }
 
@@ -661,4 +661,24 @@ mod tests {
         assert!(done, "child should exit");
         assert_eq!(s.status()["os_spawned_total"], 1);
     }
+    #[test]
+    fn spawn_local_is_ledger_only_no_os_child() {
+        // H-09: isolation_spawn("local") must NOT exec. ComputerManager owns
+        // the real command; a second silent Child was a double-exec bug.
+        let mut s = IsolationSupervisor::new();
+        s.set_process_profile("p1", IsolationProfile::Interactive);
+        assert!(IsolationSupervisor::backend_is_os("local"));
+        assert!(IsolationSupervisor::backend_is_os("os"));
+        assert!(!IsolationSupervisor::backend_is_os("bwrap"));
+        let h = s.spawn("p1", "echo should_not_run_twice", "local").expect("ledger");
+        assert!(h.os_pid.is_none(), "ledger spawn must not own an OS pid");
+        assert_eq!(s.status()["os_spawned_total"], 0);
+        let poll = s.poll(&h.id).expect("poll");
+        assert_eq!(poll.get("os_owned"), Some(&json!(false)));
+        assert_eq!(poll.get("running"), Some(&json!(true)));
+        let completed = s.complete(&h.id, 0).expect("complete");
+        assert_eq!(completed.status, "exited");
+        assert_eq!(completed.exit_code, Some(0));
+    }
+
 }

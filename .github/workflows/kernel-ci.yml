@@ -10,6 +10,7 @@ on:
       - "Cargo.lock"
       - "backend/kernel_rust/**"
       - "backend/tests/kernel/**"
+      - "docs/kernel-abi-v1.md"
       - ".github/workflows/kernel-ci.yml"
   pull_request:
     branches: [main]
@@ -18,6 +19,7 @@ on:
       - "Cargo.toml"
       - "backend/kernel_rust/**"
       - "backend/tests/kernel/**"
+      - "docs/kernel-abi-v1.md"
 
 jobs:
   rust-abi:
@@ -66,4 +68,9 @@ jobs:
           python -m pytest backend/tests/kernel/test_abi_rust.py \
             backend/tests/kernel/test_hardening_tool_gate.py \
             backend/tests/kernel/test_phase_h_hardening.py \
+            backend/tests/kernel/test_p0_acceptance_06.py \
+            backend/tests/kernel/test_p0b_intent_tools.py \
+            backend/tests/kernel/test_p0c_scheduler_resources.py \
+            backend/tests/kernel/test_p0d_court_isolation.py \
+            backend/tests/kernel/test_h03_h06_closeout.py \
             -q --tb=short

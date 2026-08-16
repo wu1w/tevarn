@@ -255,10 +255,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 pass
 
         if not hasattr(kernel, "_call"):
-            if required:
-                raise RuntimeError(
-                    "run_gate required but kernel has no _call (host unavailable)"
-                )
+            # OOTB：Python fallback 无 run_gate RPC。硬拒会让无 host / 开发路径首聊直接挂死。
+            # run_gate 只在 Rust host 上有意义；缺能力时软跳过并继续（session lock 仍串行同会话）。
+            logger.warning(
+                "run_gate skipped: kernel has no _call (Python fallback / host unavailable); "
+                "required=%s",
+                required,
+            )
             return
         try:
             # audit-fix(#10)：async 上下文改走 _acall，避免阻塞事件循环
@@ -1162,6 +1165,21 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             kernel_proc = fresh
                     except Exception as _ie:
                         logger.warning("intent apply skip: %s", _ie)
+                        # H-06: apply 失败且 capabilities 仍为 None → 生产 fail-closed
+                        if getattr(kernel_proc, "capabilities", None) is None:
+                            from backend.kernel.production_guard import (
+                                allow_compat_full_open,
+                                emit_compat_denied,
+                            )
+                            if not allow_compat_full_open():
+                                emit_compat_denied(
+                                    kernel_proc.id,
+                                    "intent_apply_fail_none_caps",
+                                    {},
+                                )
+                                raise RuntimeError(
+                                    "H2: process has capabilities=None in production"
+                                ) from _ie
                 elif intent_raw:
                     logger.info(
                         "intent on create process=%s caps=%s",
@@ -1169,6 +1187,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         (kernel_proc.capabilities or [])[:12],
                     )
                 # P0-C：run 级调度登记 + 并发槽
+                # H-07：schedule_run 是账本登记；真跨会话排队权威是 run_gate。
+                # session lock 仍串行同会话 — 不要在此删除。
                 # P0-D：isolation profile
                 try:
                     if hasattr(kernel, "_call"):
@@ -3949,11 +3969,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                             rebuilt = filter_tools_for_process(
                                 rebuilt, getattr(self, "_kernel_process", None)
                             )
-                            if rebuilt:
-                                tools = rebuilt
-                            else:
+                            tools = rebuilt
+                            if not rebuilt:
                                 logger.warning(
-                                    "MCP schema rebuild returned 0 tools; keeping previous list"
+                                    "MCP schema rebuild returned 0 tools; fail-closed empty schema"
                                 )
                         except Exception as _rb:
                             logger.warning("MCP schema rebuild failed: %s", _rb)

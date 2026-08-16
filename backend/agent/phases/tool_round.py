@@ -2772,7 +2772,9 @@ async def run_tool_round(
                     state.tools, getattr(loop, "_kernel_process", None)
                 )
             except Exception as _cf:
-                logger.debug("cap re-filter after pack expand: %s", _cf)
+                # H-06: pack expand 后 re-filter 失败 → 空 schema（fail-closed）
+                logger.warning("cap re-filter after pack expand failed: %s", _cf)
+                state.tools = []
             # Plan 未批准：扩 pack 后必须再收窄只读 schema（Court 兜底不够防 thrash）
             if getattr(loop, "_plan_mode_active", False):
                 try:

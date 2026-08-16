@@ -158,6 +158,8 @@ async def execute_tool_endpoint(
         raise HTTPException(status_code=404, detail="Tool not found")
 
     args = dict(req.arguments or {})
+    args.pop("_tool_gate_passed", None)
+    args.pop("_tool_gate_internal", None)
     pid = str(
         args.get("_kernel_process_id") or args.get("_process_id") or ""
     ).strip()
@@ -190,6 +192,13 @@ async def execute_tool_endpoint(
         if unified_tool is not None:
             result = await UnifiedToolRegistry.execute(tool.name, args)
         else:
+            from backend.kernel.tool_gate import enforce_tool_gate
+
+            args, gate_err = await enforce_tool_gate(
+                tool.name, args, process_id=pid or None
+            )
+            if gate_err:
+                raise HTTPException(status_code=403, detail=gate_err)
             result = await ToolRegistry.execute_tool(tool, args)
     except Exception as exc:
         logger.exception(f"Tool execution failed: {tool.name}")

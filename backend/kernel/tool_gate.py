@@ -171,7 +171,10 @@ def _charge(kernel: Any, process_id: str, kind: str, amount: int = 1) -> None:
             {"process_id": process_id, "kind": kind, "amount": amount},
         )
         return
-    raise RuntimeError("kernel has no resource_charge")
+    # Soft no-op on pure-Python kernels (no resource accounts). Production
+    # rust host always has resource_charge; do not fail-closed here or MCP
+    # mediate (H-03) would deny every tool under TEVARN_KERNEL_BACKEND=python.
+    logger.debug("kernel has no resource_charge; skip %s/%s", kind, process_id[:12])
 
 
 def _release(kernel: Any, process_id: str, kind: str, amount: int = 1) -> None:
@@ -438,13 +441,10 @@ async def enforce_tool_gate(
     mediate_args = sanitize_args_for_kernel(args)
     try:
         k = get_kernel()
-        # 动态 MCP 工具：不经 kernel mediate 拦截（已挂载即放行；审计在 permission_court）。
-        if str(name).startswith("mcp_"):
-            if mark_passed:
-                args["_tool_gate_passed"] = True
-                args["_tool_gate_internal"] = True
-            return args, None
-        await k.mediate(pid, "tool_call", name, args=mediate_args)
+        # 动态 MCP 工具：Rust catalog 不认识 mcp_* 名，统一按 manage_mcp 中介。
+        # 未持有 manage_mcp 的进程必须被拒绝（H-03：不可见且不可调）。
+        mediate_target = "manage_mcp" if str(name).startswith("mcp_") else name
+        await k.mediate(pid, "tool_call", mediate_target, args=mediate_args)
     except KernelPermissionError as e:
         logger.warning("tool_gate mediate deny tool=%s proc=%s: %s", name, pid[:12], e)
         return args, f"Error: Kernel 权限拒绝——{e}"
