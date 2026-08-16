@@ -68,7 +68,10 @@ export interface ModelSettingsPanelProps {
 }
 
 export function ModelSettingsPanel({
-  const { confirm, ConfirmDialogComponent } = useConfirm(); settings, onSettingsRefetch }: ModelSettingsPanelProps) {
+  settings,
+  onSettingsRefetch,
+}: ModelSettingsPanelProps) {
+  const { confirm, ConfirmDialogComponent } = useConfirm();
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
 

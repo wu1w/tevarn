@@ -159,15 +159,16 @@ function formatApiError(error: {
 
   if (!error.response) {
     if (error.code === 'ECONNABORTED') return t('api._e5');
-    return t('api._e8') + ` (${base}${path})`;
+    // Network / connection failure (not HTTP status)
+    return t('api.connectFailed').replace('{base}', base).replace('{path}', path);
   }
 
-  if (status === 404) return t('api._e8') + ' (404)';
+  if (status === 404) return t('api.notFound');
   if (status === 403) return t('api._e6');
   if (status === 429) return t('api._e7');
-  if (status === 502) return t('api._e5');
+  if (status === 502) return t('api.badGateway');
   if (status && status >= 500) {
-    return t('api._e8') + ` (${status})`;
+    return t('api.serverError').replace('{status}', String(status));
   }
 
   return error.message || t('api._e8');

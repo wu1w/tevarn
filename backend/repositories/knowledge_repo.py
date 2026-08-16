@@ -119,10 +119,16 @@ class AsyncDocumentRepository(AsyncBaseRepository, DocumentRepository):
         finally:
             await self._close_session(session)
 
-    async def list_by_user(self, user_id: uuid.UUID) -> list[Document]:
+    async def list_by_user(
+        self,
+        user_id: uuid.UUID,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[Document]:
         session = await self._get_session()
         try:
-            result = await session.execute(
+            stmt = (
                 select(Document)
                 .where(
                     or_(
@@ -132,6 +138,11 @@ class AsyncDocumentRepository(AsyncBaseRepository, DocumentRepository):
                 )
                 .order_by(Document.created_at.desc())
             )
+            if offset:
+                stmt = stmt.offset(max(0, int(offset)))
+            if limit is not None:
+                stmt = stmt.limit(max(1, int(limit)))
+            result = await session.execute(stmt)
             return list(result.scalars().all())
         finally:
             await self._close_session(session)

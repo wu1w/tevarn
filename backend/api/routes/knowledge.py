@@ -73,9 +73,8 @@ async def list_documents(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    """Paginated document list (default 100, max 500) to keep first paint fast."""
-    rows = await repo.list_by_user(current_user.id) or []
-    return rows[offset : offset + limit]
+    """Paginated document list (default 100, max 500) — limit/offset pushed to SQL."""
+    return await repo.list_by_user(current_user.id, limit=limit, offset=offset) or []
 
 
 @router.post("/documents", response_model=DocumentRead)

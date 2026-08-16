@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { t } from '@/stores/localeStore';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -25,15 +26,18 @@ const variantStyles = {
  */
 export function ConfirmDialog({
   open,
-  title = 'Please confirm',
+  title,
   message,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText,
+  cancelText,
   variant = 'danger',
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   if (!open) return null;
+  const resolvedTitle = title || t('desktop._e98');
+  const resolvedConfirm = confirmText || t('common.confirm');
+  const resolvedCancel = cancelText || t('contextDash.cancel');
 
   return (
     <div
@@ -44,20 +48,20 @@ export function ConfirmDialog({
         className="w-full max-w-sm rounded-xl border border-border-default bg-card-bg p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-semibold text-foreground">{title}</h3>
+        <h3 className="text-base font-semibold text-foreground">{resolvedTitle}</h3>
         <p className="mt-2 text-sm text-foreground-dim">{message}</p>
         <div className="mt-5 flex justify-end gap-3">
           <button
             onClick={onCancel}
             className="rounded-lg border border-border-default px-4 py-2 text-sm text-foreground-muted hover:bg-elevated-bg transition-colors"
           >
-            {cancelText}
+            {resolvedCancel}
           </button>
           <button
             onClick={onConfirm}
             className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${variantStyles[variant]}`}
           >
-            {confirmText}
+            {resolvedConfirm}
           </button>
         </div>
       </div>
@@ -94,11 +98,11 @@ export function useConfirm() {
 
   const confirm = (
     message: string,
-    title = 'Please confirm',
+    title?: string,
     variant: 'danger' | 'warning' | 'default' = 'danger'
   ): Promise<boolean> => {
     return new Promise((resolve) => {
-      setState({ open: true, title, message, variant, resolve });
+      setState({ open: true, title: title || t('desktop._e98'), message, variant, resolve });
     });
   };
 
