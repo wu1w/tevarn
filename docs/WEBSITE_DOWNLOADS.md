@@ -12,7 +12,8 @@
 ### 安装包 URL
 
 ```text
-https://dl.tevarn.com/v0.4.0/Tevarn-Setup-0.4.0-x64.exe
+https://tevarn.com/downloads/Tevarn-Setup-0.4.3-x64.exe
+https://dl.tevarn.com/v0.4.3/Tevarn-Setup-0.4.3-x64.exe
 https://dl.tevarn.com/v0.4.0/Tevarn-Mobile-0.4.0.apk
 ```
 

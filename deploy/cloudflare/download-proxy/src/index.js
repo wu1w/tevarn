@@ -12,6 +12,22 @@
  */
 
 const ASSETS = {
+  "v0.4.3/Tevarn-Setup-0.4.3-x64.exe": {
+    gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.3/Tevarn-Setup-0.4.3-x64.exe",
+    type: "application/octet-stream",
+  },
+  "v0.4.3/Tevarn-0.4.3-win-portable.exe": {
+    gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.3/Tevarn-0.4.3-win-portable.exe",
+    type: "application/octet-stream",
+  },
+  "v0.4.3/Tevarn-0.4.3-win-x64.zip": {
+    gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.3/Tevarn-0.4.3-win-x64.zip",
+    type: "application/octet-stream",
+  },
+  "v0.4.2/Tevarn-Setup-0.4.2-x64.exe": {
+    gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.2/Tevarn-Setup-0.4.2-x64.exe",
+    type: "application/octet-stream",
+  },
   "v0.4.0/Tevarn-Setup-0.4.0-x64.exe": {
     gh: "https://github.com/wu1w/tevarn/releases/download/v0.4.0/Tevarn-Setup-0.4.0-x64.exe",
     type: "application/octet-stream",
