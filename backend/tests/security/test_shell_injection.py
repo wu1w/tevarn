@@ -141,3 +141,31 @@ async def test_windows_env_backtick_injection_blocked(command: str) -> None:
     with pytest.raises(ValueError) as ei:
         await ss.create_process(command)
     assert "injection risk" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_create_process_exec_falls_back_on_not_implemented(monkeypatch) -> None:
+    async def _boom(*_a, **_k):
+        raise NotImplementedError()
+
+    monkeypatch.setattr(ss.asyncio, "create_subprocess_exec", _boom)
+    monkeypatch.setattr(ss, "_windows_selector_loop", lambda: False)
+    proc = await ss.create_process_exec(sys.executable, "-c", "print(42)")
+    out, _err = await proc.communicate()
+    assert b"42" in out
+
+
+@pytest.mark.asyncio
+async def test_create_process_exec_selector_skips_asyncio_subprocess(monkeypatch) -> None:
+    called = []
+
+    async def _boom(*_a, **_k):
+        called.append(1)
+        raise AssertionError("asyncio subprocess must not run on SelectorEventLoop path")
+
+    monkeypatch.setattr(ss, "_windows_selector_loop", lambda: True)
+    monkeypatch.setattr(ss.asyncio, "create_subprocess_exec", _boom)
+    proc = await ss.create_process_exec(sys.executable, "-c", "print(42)")
+    out, _err = await proc.communicate()
+    assert b"42" in out
+    assert called == []

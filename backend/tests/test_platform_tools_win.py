@@ -23,6 +23,25 @@ def test_python_tool_multiline():
     assert "ok" in out
 
 
+def test_python_tool_on_selector_event_loop(monkeypatch):
+    """WindowsSelectorEventLoop: asyncio subprocess is NotImplemented — python must still run."""
+    monkeypatch.setattr(
+        "backend.services.tools.executors._must_use_computer_path",
+        lambda _arguments: False,
+    )
+
+    async def _run():
+        return await execute_python({}, {"code": "print(7*6)"})
+
+    loop = asyncio.SelectorEventLoop()
+    try:
+        out = loop.run_until_complete(_run())
+    finally:
+        loop.close()
+    assert "42" in out
+    assert not str(out).lstrip().startswith("[Error]")
+
+
 def test_result_load_tool_registered():
     from backend.agent.tool_policy import DEFAULT_CHAT_TOOL_WHITELIST
     from backend.tools.builtins.core_tools import BUILTIN_TOOL_CLASSES, ResultLoadTool

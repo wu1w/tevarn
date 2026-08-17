@@ -26,6 +26,9 @@ export function ChatStatusStrip({
   planLabel,
   skillLabels,
   zh = true,
+  lead = null,
+  below = null,
+  hidePhase = false,
 }: {
   sessionId?: string | null;
   capsCount?: number | null;
@@ -38,6 +41,10 @@ export function ChatStatusStrip({
   planLabel?: string | null;
   skillLabels?: string[] | null;
   zh?: boolean;
+  /** 左侧运行摘要 / 文件入口，与本条共用一行 */
+  lead?: React.ReactNode;
+  below?: React.ReactNode;
+  hidePhase?: boolean;
 }) {
   const addToast = useToastStore((s) => s.addToast);
   const qc = useQueryClient();
@@ -132,14 +139,25 @@ export function ChatStatusStrip({
   const sandLevel = String(data?.sandbox?.level || data?.sandbox?.backend || '');
   const fullIso = data?.sandbox?.full_isolation === true;
   const showSandboxWarn = Boolean(sandLevel) && !fullIso;
+  const showHost = Boolean(data && unhealthy);
 
-  // 健康且无任何入口数据时：只留一条极细分隔，不占视线
   const hasCaps = capsCount != null || toolsCount != null;
   const hasRuns = Boolean(sessionId && runItems.length > 0);
   const hasJobs =
     Boolean(sessionId && jobItems.length > 0 && jobs.data?.enabled !== false);
   const hasLiveModel = Boolean(liveModel && String(liveModel).trim());
-  if (!data && !hasCaps && !hasRuns && !hasJobs && !hasLiveModel) {
+  const showPhase = Boolean(!hidePhase && phaseChip) || Boolean(planChip || skillChip);
+  if (
+    !lead &&
+    !below &&
+    !showHost &&
+    !showSandboxWarn &&
+    !hasCaps &&
+    !hasRuns &&
+    !hasJobs &&
+    !hasLiveModel &&
+    !showPhase
+  ) {
     return null;
   }
 
@@ -148,44 +166,23 @@ export function ChatStatusStrip({
 
   return (
     <div ref={rootRef} className="relative border-t border-border-subtle">
-      {phaseChip ? (
-        <span className="rounded-md bg-brand-cyan/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-cyan">
-          {phaseChip}
-        </span>
-      ) : null}
-      {planChip ? (
-        <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
-          Plan · {planChip}
-        </span>
-      ) : null}
-      {skillChip ? (
-        <span
-          className="max-w-[140px] truncate rounded-md bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300"
-          title={(skillLabels || []).join(', ')}
-        >
-          Skills · {skillChip}
-        </span>
-      ) : null}
-      <div className="flex h-[24px] items-center gap-1.5 overflow-hidden px-3">
-        {data ? (
+      <div className="flex h-7 items-center gap-1.5 overflow-hidden px-3">
+        {lead}
+        {showHost ? (
           <button
             type="button"
             className={chip}
-            title={unhealthy ? data?.issues?.[0]?.message || '' : 'Runtime OK'}
+            title={data?.issues?.[0]?.message || ''}
             onClick={() => setPop((p) => (p === 'health' ? null : 'health'))}
           >
             <span
               className={`h-2 w-2 shrink-0 rounded-[1px] shadow-[1px_1px_0_var(--hard)] ${
-                unhealthy
-                  ? data?.severity === 'error'
-                    ? 'bg-status-offline'
-                    : 'bg-[var(--sem-warn)]'
-                  : 'bg-status-online'
+                data?.severity === 'error'
+                  ? 'bg-status-offline'
+                  : 'bg-[var(--sem-warn)]'
               }`}
             />
-            {unhealthy
-              ? (data?.issues?.[0]?.title || (zh ? '异常' : 'Issue')).slice(0, 12)
-              : 'Host'}
+            {(data?.issues?.[0]?.title || (zh ? '异常' : 'Issue')).slice(0, 12)}
           </button>
         ) : null}
 
@@ -204,6 +201,25 @@ export function ChatStatusStrip({
             />
             {zh ? '沙箱·限' : 'SBX'}
             {sandLevel && sandLevel !== '—' ? ` ${sandLevel}` : ''}
+          </span>
+        ) : null}
+
+        {!hidePhase && phaseChip ? (
+          <span className="inline-flex h-5 max-w-[8rem] truncate rounded-[3px] bg-brand-cyan/15 px-1.5 text-[10px] font-medium text-brand-cyan">
+            {phaseChip}
+          </span>
+        ) : null}
+        {planChip ? (
+          <span className="inline-flex h-5 max-w-[8rem] truncate rounded-[3px] bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
+            Plan · {planChip}
+          </span>
+        ) : null}
+        {skillChip ? (
+          <span
+            className="inline-flex h-5 max-w-[8rem] truncate rounded-[3px] bg-violet-500/15 px-1.5 text-[10px] font-medium text-violet-600 dark:text-violet-300"
+            title={(skillLabels || []).join(', ')}
+          >
+            Skills · {skillChip}
           </span>
         ) : null}
 
@@ -317,6 +333,7 @@ export function ChatStatusStrip({
           />
         </div>
       ) : null}
+      {below ? <div className="border-t border-border-subtle/60">{below}</div> : null}
     </div>
   );
 }

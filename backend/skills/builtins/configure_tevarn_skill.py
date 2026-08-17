@@ -21,6 +21,15 @@ from ..base import BaseSkill
 
 _LOW_RISK = {c["key"] for c in SETTINGS_CATALOG if c["risk"] == "low"}
 _HIGH_RISK = {c["key"] for c in SETTINGS_CATALOG if c["risk"] == "high"}
+_ACTION_NAMES = frozenset({
+    "guide",
+    "status",
+    "list_settings",
+    "set_setting",
+    "checklist",
+    "search",
+    "topics",
+})
 
 
 class ConfigureTevarnSkill(BaseSkill):
@@ -94,6 +103,11 @@ class ConfigureTevarnSkill(BaseSkill):
         **kwargs: Any,
     ) -> str:
         action = (action or "guide").strip().lower()
+        # 模型常把 action 写进 topic（topic=status），resolve_topic 会落到 overview。
+        topic_key = (topic or "").strip().lower()
+        if action in ("", "guide") and topic_key in _ACTION_NAMES and topic_key != "guide":
+            action = topic_key
+            topic = None
 
         if action == "topics":
             lines = ["可用手册主题："]

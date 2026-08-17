@@ -5,14 +5,10 @@ import Link from 'next/link';
 import { ChatWindow } from '@/components/chat/ChatWindow';
 import { ProjectGroupView } from '@/components/chat/ProjectGroupView';
 import { MessageInput, Attachment, ChatMode, type MessageInputHandle } from '@/components/chat/MessageInput';
-import { FilePreviewHost } from '@/components/chat/FilePreviewHost';
-import { SessionArtifactsBar } from '@/components/chat/SessionArtifactsBar';
 import type { ChatArtifact } from '@/lib/artifacts';
-import { TerminalPanel, formatArgsText, formatResultText } from '@/components/chat/TerminalPanel';
-import { ActivityPanel } from '@/components/chat/ActivityPanel';
-import { ChatStatusStrip } from '@/components/chat/ChatStatusStrip';
-import { TaskPanel } from '@/components/tasks/TaskPanel';
-import { TransparencyPanel } from '@/components/chat/TransparencyPanel';
+import { formatArgsText, formatResultText } from '@/components/chat/TerminalPanel';
+import { ComposerContextStrip } from '@/components/chat/ComposerContextStrip';
+import { ChatInspector } from '@/components/chat/ChatInspector';
 import { GlobalSearch } from '@/components/search/GlobalSearch';
 import { useSession } from '@/hooks/useSession';
 import { useChatWsBridge } from '@/stores/chatWsBridge';
@@ -27,13 +23,14 @@ import { generateUUID } from '@/lib/uuid';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
-import { WorkspaceDock } from '@/components/workspace/WorkspaceDock';
 import { OpenProjectModal } from '@/components/workspace/OpenProjectModal';
 import { ContactSessionPicker } from '@/components/chat/ContactSessionPicker';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { streamSessionApi } from '@/stores/streamSessionStore';
 import { openSessionTabChannel } from '@/lib/sessionTabChannel';
+import { useChatInspectorStore, type ChatInspectorTab } from '@/stores/chatInspectorStore';
+import { Eye, FolderOpen, ListTodo, ScanSearch, Terminal } from 'lucide-react';
 
 
 export default function ChatPage() {
@@ -139,8 +136,6 @@ function ChatPageInner() {
     const {
       uiMode,
       setUiMode,
-      dockOpen,
-      toggleDock,
       root: workspaceRoot,
       name: workspaceName,
       setForceProjectOpen,
@@ -158,8 +153,6 @@ function ChatPageInner() {
           // eslint-disable-next-line react-hooks/exhaustive-deps
         }, []);
 
-        const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
-        const [isTransparencyOpen, setIsTransparencyOpen] = useState(false);
         const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
         const [isStreaming, setIsStreaming] = useState(false);
   const [codingDelivery, setCodingDelivery] = useState<CodingDelivery | null>(null);
@@ -206,8 +199,6 @@ function ChatPageInner() {
         }, [streamingContent]);
         const [liveToolCalls, setLiveToolCalls] = useState<ToolCallData[]>([]);
                 const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
-        // 实时终端面板订阅（header 开关按钮的未读点）
-        const termPanelOpen = useTerminalStore((s) => s.panelOpen);
         const termHasEntries = useTerminalStore((s) => s.entries.length > 0);
 
             const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -216,6 +207,21 @@ function ChatPageInner() {
     const [isDragging, setIsDragging] = useState(false);
     const composerRef = useRef<MessageInputHandle | null>(null);
     const [previewArtifact, setPreviewArtifact] = useState<ChatArtifact | null>(null);
+    const inspectorTab = useChatInspectorStore((s) => s.tab);
+    const toggleInspectorTab = useCallback((id: ChatInspectorTab) => {
+      useChatInspectorStore.getState().toggleTab(id);
+      const next = useChatInspectorStore.getState().tab;
+      if (id === 'files' || next === null) {
+        useWorkspaceStore.getState().setDockOpen(next === 'files');
+      }
+      if (id === 'terminal' || next === null) {
+        useTerminalStore.getState().setPanelOpen(next === 'terminal');
+      }
+    }, []);
+    const openPreview = useCallback((artifact: ChatArtifact) => {
+      setPreviewArtifact(artifact);
+      useChatInspectorStore.getState().setTab('preview');
+    }, []);
     const [recovery, setRecovery] = useState<SessionRecoveryPayload | null>(null);
     const [runCaps, setRunCaps] = useState<{
       caps?: number;
@@ -241,7 +247,13 @@ function ChatPageInner() {
         };
       };
       w.__tevarnSmoke = {
-        setPreview: setPreviewArtifact,
+        setPreview: (a) => {
+          setPreviewArtifact(a);
+          if (a) useChatInspectorStore.getState().setTab('preview');
+          else if (useChatInspectorStore.getState().tab === 'preview') {
+            useChatInspectorStore.getState().setTab(null);
+          }
+        },
         addMessage,
         setMessages: useSessionStore.getState().setMessages,
       };
@@ -413,12 +425,6 @@ function ChatPageInner() {
           if (cancelled) return;
           if (cp?.goal) {
             setActiveGoal(cp.goal);
-            if (
-              cp.goal.status === 'active' ||
-              (cp.goal.todos && cp.goal.todos.length > 0)
-            ) {
-              setIsTaskPanelOpen(true);
-            }
           }
           // R-02：仅在可恢复时展示卡片
           if (cp?.recovery?.show) {
@@ -835,10 +841,6 @@ function ChatPageInner() {
   const handleGoalUpdate = useCallback((msg: GoalUpdateMessage) => {
       if (msg.goal) {
         setActiveGoal(msg.goal);
-        // Goal 进度改在任务看板，有更新时自动打开
-        if (msg.goal.status === 'active' || (msg.goal.todos && msg.goal.todos.length > 0)) {
-          setIsTaskPanelOpen(true);
-        }
       }
     }, []);
 
@@ -1720,7 +1722,7 @@ const handleUserMessageAck = useCallback(
     { key: 'n', meta: true, shift: true, handler: () => createAndLoadSession().catch(console.error) },
     { key: ',', meta: true, handler: () => router.push('/settings') },
     { key: '/', meta: true, handler: () => setSearchOpen(true) },
-    { key: 'b', ctrl: true, handler: () => toggleDock() },
+    { key: 'b', ctrl: true, handler: () => toggleInspectorTab(uiMode === 'pro' ? 'files' : 'run') },
     { key: 'Enter', meta: true, handler: () => { const textarea = document.querySelector<HTMLTextAreaElement>('.chat-composer-textarea'); if (textarea && !textarea.disabled) { const form = textarea.closest('form'); form?.requestSubmit(); } }, preventDefault: true },
   ]);
 
@@ -1925,19 +1927,95 @@ const handleUserMessageAck = useCallback(
                                   {t('chat.pro')}
                                 </button>
                               </div>
+                              <div className="flex items-center rounded-lg border border-border-subtle p-0.5">
                               {uiMode === 'pro' && (
                                 <button
                                   type="button"
-                                  onClick={toggleDock}
-                                  className="relative rounded-lg border border-border-subtle px-2 py-1 text-[11px] text-foreground-muted hover:bg-card-bg-hover"
-                                  title={t('chat.dockTitle')}
+                                  onClick={() => toggleInspectorTab('files')}
+                                  className={`relative inline-flex h-7 w-7 items-center justify-center rounded-[3px] ${
+                                    inspectorTab === 'files'
+                                      ? 'bg-brand-purple/15 text-brand-cyan'
+                                      : 'text-foreground-muted hover:bg-card-bg-hover'
+                                  }`}
+                                  title={t('chat.inspectorFiles')}
+                                  aria-label={t('chat.inspectorFiles')}
+                                  aria-pressed={inspectorTab === 'files'}
                                 >
-                                  {dockOpen ? t('chat.hideDock') : t('chat.showDock')}
-                                  {unreadTerminal && !dockOpen && (
+                                  <FolderOpen className="h-3.5 w-3.5" />
+                                  {unreadTerminal && inspectorTab !== 'files' && (
                                     <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-cyan" />
                                   )}
                                 </button>
                               )}
+                              <button
+                                type="button"
+                                onClick={() => toggleInspectorTab('preview')}
+                                className={`relative inline-flex h-7 w-7 items-center justify-center rounded-[3px] ${
+                                  inspectorTab === 'preview'
+                                    ? 'bg-brand-purple/15 text-brand-cyan'
+                                    : 'text-foreground-muted hover:bg-card-bg-hover'
+                                }`}
+                                title={t('chat.inspectorPreview')}
+                                aria-label={t('chat.inspectorPreview')}
+                                aria-pressed={inspectorTab === 'preview'}
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                                {previewArtifact && inspectorTab !== 'preview' ? (
+                                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-cyan" />
+                                ) : null}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleInspectorTab('terminal')}
+                                className={`relative inline-flex h-7 w-7 items-center justify-center rounded-[3px] ${
+                                  inspectorTab === 'terminal'
+                                    ? 'bg-brand-purple/15 text-brand-cyan'
+                                    : 'text-foreground-muted hover:bg-card-bg-hover'
+                                }`}
+                                title={t('terminal.title')}
+                                aria-label={t('terminal.toggle')}
+                                aria-pressed={inspectorTab === 'terminal'}
+                              >
+                                <Terminal className="h-3.5 w-3.5" />
+                                {termHasEntries && inspectorTab !== 'terminal' ? (
+                                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-cyan" />
+                                ) : null}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleInspectorTab('run')}
+                                className={`relative inline-flex h-7 w-7 items-center justify-center rounded-[3px] ${
+                                  inspectorTab === 'run'
+                                    ? 'bg-brand-purple/15 text-brand-cyan'
+                                    : 'text-foreground-muted hover:bg-card-bg-hover'
+                                }`}
+                                title={t('chat.inspectorRun')}
+                                aria-label={t('chat.inspectorRun')}
+                                aria-pressed={inspectorTab === 'run'}
+                              >
+                                <ListTodo className="h-3.5 w-3.5" />
+                                {activeGoal &&
+                                  (activeGoal.status === 'active' ||
+                                    (activeGoal.todos && activeGoal.todos.length > 0)) &&
+                                  inspectorTab !== 'run' && (
+                                    <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-cyan" />
+                                  )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleInspectorTab('trace')}
+                                className={`relative inline-flex h-7 w-7 items-center justify-center rounded-[3px] ${
+                                  inspectorTab === 'trace'
+                                    ? 'bg-brand-purple/15 text-brand-cyan'
+                                    : 'text-foreground-muted hover:bg-card-bg-hover'
+                                }`}
+                                title={t('chat.inspectorTrace')}
+                                aria-label={t('chat.inspectorTrace')}
+                                aria-pressed={inspectorTab === 'trace'}
+                              >
+                                <ScanSearch className="h-3.5 w-3.5" />
+                              </button>
+                              </div>
                               {/* 仅在「有会话却未连上」时提示，避免与 TitleBar「服务就绪」重复 */}
                               {!!currentSession && !isConnected && !isConnecting && (
                                 <button
@@ -1958,36 +2036,6 @@ const handleUserMessageAck = useCallback(
                                   {t('chat.generatingImage')}
                                 </span>
                               )}
-                              <button
-                                onClick={() => useTerminalStore.getState().togglePanel()}
-                                className="relative rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
-                                title={t('terminal.title')}
-                              >
-                                {t('terminal.toggle')}
-                                {termHasEntries && !termPanelOpen && (
-                                  <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-brand-cyan" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => setIsTransparencyOpen(true)}
-                                className="rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
-                              >
-                                {t('chat.transparency')}
-                              </button>
-                              <button
-                                onClick={() => setIsTaskPanelOpen(true)}
-                                className="relative rounded-lg border border-border-subtle bg-card-bg px-3.5 py-1.5 text-xs font-medium text-foreground-muted transition-all hover:border-border-default hover:bg-card-bg-hover"
-                              >
-                                {t('chat.taskBoard')}
-                                {activeGoal &&
-                                  (activeGoal.status === 'active' ||
-                                    (activeGoal.todos && activeGoal.todos.length > 0)) && (
-                                    <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5">
-                                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-cyan opacity-60" />
-                                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-brand-cyan" />
-                                    </span>
-                                  )}
-                              </button>
                             </div>
             </header>
 
@@ -2014,7 +2062,7 @@ const handleUserMessageAck = useCallback(
                           onRegenerate={handleRegenerate}
                           onEdit={handleEdit}
                           onExampleSelect={(text) => setEditingContent(text)}
-                          onPreviewArtifact={setPreviewArtifact}
+                          onPreviewArtifact={openPreview}
                           contactName={sessionIdentity || null}
                           sessionId={currentSession?.id || null}
                           onLoadOlder={handleLoadOlder}
@@ -2058,36 +2106,28 @@ const handleUserMessageAck = useCallback(
                           </button>
                         </div>
                       )}
-                      <SessionArtifactsBar
+                      <ComposerContextStrip
                         messages={displayMessages}
-                        onPreview={setPreviewArtifact}
-                      />
-                      {/* 活动流：仅流式时出现，单行 */}
-                      <ActivityPanel
+                        onPreview={openPreview}
                         liveToolCalls={liveToolCalls}
                         streamStatusDetail={streamStatusDetail}
                         isStreaming={isStreaming}
+                        goal={activeGoal}
+                        planLabel={planPhase}
+                        skillLabels={injectedSkills}
+                        phaseLabel={
+                          codingDelivery?.phase_label ||
+                          codingDelivery?.phase ||
+                          (streamStatusDetail && /understand|plan|edit|test|review|deliver/i.test(streamStatusDetail)
+                            ? streamStatusDetail
+                            : null)
+                        }
+                        sessionId={currentSession?.id}
+                        capsCount={runCaps?.caps}
+                        toolsCount={runCaps?.tools}
+                        softRenew={runCaps?.soft}
+                        liveModel={liveModel}
                       />
-                      {/* 统一状态条：健康 / 沙箱 / 能力 / 记录 / 工单 */}
-                      <div className="relative">
-                        <ChatStatusStrip
-                          planLabel={planPhase}
-                          skillLabels={injectedSkills}
-                          phaseLabel={
-                            codingDelivery?.phase_label ||
-                            codingDelivery?.phase ||
-                            (streamStatusDetail && /understand|plan|edit|test|review|deliver/i.test(streamStatusDetail)
-                              ? streamStatusDetail
-                              : null)
-                          }
-                          sessionId={currentSession?.id}
-                          capsCount={runCaps?.caps}
-                          toolsCount={runCaps?.tools}
-                          softRenew={runCaps?.soft}
-                          liveModel={liveModel}
-                          zh
-                        />
-                      </div>
                       {/* 卡住：优先提示停止，再给恢复卡 */}
                       {streamStuck && isStreaming && !isStopping && (
                         <div className="mx-3 mb-2 flex items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
@@ -2181,50 +2221,35 @@ const handleUserMessageAck = useCallback(
                       ) : null}
                     </main>
 
-                    {previewArtifact && (
-                      <FilePreviewHost
-                        artifact={previewArtifact}
-                        onClose={() => setPreviewArtifact(null)}
-                      />
-                    )}
-                    <WorkspaceDock />
-
-                    {/* 实时终端面板：desktop/shell 工具调用命令流 */}
-                    <TerminalPanel />
-
-                    {/* 任务面板抽屉：Goal + 已进行操作（可跳转会话） */}
-                                        <TaskPanel
-                                          messages={messages}
-                                          liveToolCalls={liveToolCalls}
-                                          isOpen={isTaskPanelOpen}
-                                          onClose={() => setIsTaskPanelOpen(false)}
-                                          goal={activeGoal}
-                                          onClearGoal={() => setActiveGoal(null)}
-                                          highlightedMessageId={highlightMessageId}
-                                          onJumpToMessage={(messageId) => {
-                                            if (messageId === 'streaming') {
-                                              const el = document.getElementById('msg-streaming');
-                                              el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                              return;
-                                            }
-                                            const el = document.getElementById(`msg-${messageId}`);
-                                            if (!el) return;
-                                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                            setHighlightMessageId(messageId);
-                                            el.classList.remove('msg-flash');
-                                            void el.offsetWidth;
-                                            el.classList.add('msg-flash');
-                                            window.setTimeout(() => {
-                                              el.classList.remove('msg-flash');
-                                              setHighlightMessageId(null);
-                                            }, 1600);
-                                          }}
-                                        />
-                                        <TransparencyPanel
-                                          sessionId={currentSession?.id || ''}
-                                          visible={isTransparencyOpen}
-                                          onClose={() => setIsTransparencyOpen(false)}
-                                        />
+                    <ChatInspector
+                      uiMode={uiMode}
+                      previewArtifact={previewArtifact}
+                      onClosePreview={() => setPreviewArtifact(null)}
+                      messages={messages}
+                      liveToolCalls={liveToolCalls}
+                      sessionId={currentSession?.id}
+                      goal={activeGoal}
+                      onClearGoal={() => setActiveGoal(null)}
+                      highlightedMessageId={highlightMessageId}
+                      onJumpToMessage={(messageId) => {
+                        if (messageId === 'streaming') {
+                          const el = document.getElementById('msg-streaming');
+                          el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          return;
+                        }
+                        const el = document.getElementById(`msg-${messageId}`);
+                        if (!el) return;
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        setHighlightMessageId(messageId);
+                        el.classList.remove('msg-flash');
+                        void el.offsetWidth;
+                        el.classList.add('msg-flash');
+                        window.setTimeout(() => {
+                          el.classList.remove('msg-flash');
+                          setHighlightMessageId(null);
+                        }, 1600);
+                      }}
+                    />
                                       </div>
 
                                       <OpenProjectModal />

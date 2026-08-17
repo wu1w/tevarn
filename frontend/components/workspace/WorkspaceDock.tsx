@@ -11,6 +11,9 @@ import { FileTree } from '@/components/filetree/FileTree';
 import type { FileTreeItem } from '@/types';
 import { useWorkspaceStore, type TerminalLine } from '@/stores/workspaceStore';
 import { useT } from '@/stores/localeStore';
+import { ColResizer } from '@/components/ui/ColResizer';
+import { useColResize } from '@/hooks/useColResize';
+import { maxRightPanelWidth } from '@/lib/colResize';
 
 function toFileTreeItems(
   nodes: Array<{
@@ -51,7 +54,7 @@ function lineClass(type: TerminalLine['type']): string {
   }
 }
 
-export function WorkspaceDock() {
+export function WorkspaceDock({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useT();
   const uiMode = useWorkspaceStore((s) => s.uiMode);
   const dockOpen = useWorkspaceStore((s) => s.dockOpen);
@@ -74,6 +77,14 @@ export function WorkspaceDock() {
 
   const [cmd, setCmd] = useState('');
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const dockResize = useColResize({
+    storageKey: 'tk-dock-w',
+    defaultWidth: 320,
+    min: 240,
+    max: () => maxRightPanelWidth(panelRef.current),
+    edge: 'left',
+  });
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
   const lines = activeTab?.lines ?? [];
 
@@ -89,7 +100,8 @@ export function WorkspaceDock() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [lines.length, activeTabId]);
 
-  if (uiMode !== 'pro' || !dockOpen) return null;
+  if (uiMode !== 'pro') return null;
+  if (!embedded && !dockOpen) return null;
 
   const treeItems = toFileTreeItems(tree as WorkspaceTreeNode[]);
   const shellActive = activeTab?.kind === 'shell';
@@ -101,8 +113,28 @@ export function WorkspaceDock() {
     await runCommand(c, activeTabId);
   };
 
+  const Root = embedded ? 'div' : 'aside';
+
   return (
-    <aside className="flex w-[min(380px,42vw)] min-w-[280px] max-w-[480px] shrink-0 flex-col border-l border-border-subtle bg-zinc-950/95">
+    <Root
+      ref={panelRef as React.Ref<HTMLDivElement & HTMLElement>}
+      className={
+        embedded
+          ? 'flex h-full min-h-0 flex-col bg-zinc-950/95'
+          : 'relative flex min-w-[240px] shrink-0 flex-col border-l border-border-subtle bg-zinc-950/95'
+      }
+      style={embedded ? undefined : { width: dockResize.width, flex: '0 1 auto' }}
+    >
+      {embedded ? null : (
+        <ColResizer
+          className="tk-edge-resizer"
+          label={t('layout.resizeDock' as never)}
+          onStart={dockResize.onStart}
+          onDrag={dockResize.onDrag}
+          onEnd={dockResize.onEnd}
+          onDoubleClick={dockResize.onReset}
+        />
+      )}
       {/* 项目头 */}
       <div className="flex items-center gap-1.5 border-b border-zinc-800 px-2.5 py-2">
         <button
@@ -125,14 +157,16 @@ export function WorkspaceDock() {
         >
           <RefreshCw className={`h-3.5 w-3.5 ${treeLoading ? 'animate-spin' : ''}`} />
         </button>
-        <button
-          type="button"
-          onClick={() => setDockOpen(false)}
-          className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
-          title={t('workspace._e34')}
-        >
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
+        {embedded ? null : (
+          <button
+            type="button"
+            onClick={() => setDockOpen(false)}
+            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            title={t('workspace._e34')}
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {/* 文件树 */}
@@ -247,6 +281,6 @@ export function WorkspaceDock() {
           </form>
         ) : null}
       </div>
-    </aside>
+    </Root>
   );
 }

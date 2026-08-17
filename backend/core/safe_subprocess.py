@@ -239,22 +239,36 @@ async def kill_process_tree(proc: asyncio.subprocess.Process | None) -> None:
     try:
         if sys.platform == "win32" and pid:
             # /T = tree; /F = force. Avoids orphaned cmd/python grandchildren.
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill",
-                "/PID",
-                str(pid),
-                "/T",
-                "/F",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            try:
-                await asyncio.wait_for(killer.wait(), timeout=5.0)
-            except Exception:
+            # SelectorEventLoop cannot create_subprocess_exec — same Popen fallback.
+            if _windows_selector_loop():
+                def _taskkill() -> None:
+                    import subprocess as _sp
+
+                    _sp.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        stdout=_sp.DEVNULL,
+                        stderr=_sp.DEVNULL,
+                        check=False,
+                    )
+
+                await asyncio.to_thread(_taskkill)
+            else:
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill",
+                    "/PID",
+                    str(pid),
+                    "/T",
+                    "/F",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
                 try:
-                    killer.kill()
+                    await asyncio.wait_for(killer.wait(), timeout=5.0)
                 except Exception:
-                    pass
+                    try:
+                        killer.kill()
+                    except Exception:
+                        pass
         else:
             # start_new_session=True below → process group id == pid
             if pid and hasattr(os, "killpg"):
@@ -389,6 +403,32 @@ def _popen_thread_process(
     return _ThreadSubprocess(popen)
 
 
+def _popen_thread_argv(
+    argv: list[str],
+    *,
+    cwd: str | None,
+    env: dict[str, str] | None,
+) -> _ThreadSubprocess:
+    import subprocess as _sp
+
+    if not argv:
+        raise ValueError("empty argv")
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = int(getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0) or 0)
+    popen = _sp.Popen(  # type: ignore[call-overload, arg-type]
+        argv,
+        shell=False,
+        cwd=cwd or None,
+        env=env,
+        stdin=_sp.DEVNULL,
+        stdout=_sp.PIPE,
+        stderr=_sp.PIPE,
+        creationflags=creationflags,
+    )
+    return _ThreadSubprocess(popen)
+
+
 async def create_process(
     command: str,
     *,
@@ -483,6 +523,48 @@ async def create_process(
             use_shell=use_shell,
             cwd=cwd,
             env=run_env,
+        )
+
+
+async def create_process_exec(
+    *argv: str,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> Any:
+    """Spawn argv without a shell (python.exe + script, etc.).
+
+    Windows SelectorEventLoop: threaded Popen — asyncio subprocess is
+    NotImplemented there (bare exception → empty ``[Error]`` for python tool).
+    """
+    argv_l = [str(a) for a in argv if str(a)]
+    if not argv_l:
+        raise ValueError("empty argv")
+    run_env: dict[str, str] | None = None
+    if env is not None:
+        run_env = {
+            str(k): str(v) for k, v in env.items() if k is not None and v is not None
+        }
+    if _windows_selector_loop():
+        return await asyncio.to_thread(
+            _popen_thread_argv, argv_l, cwd=cwd, env=run_env
+        )
+    spawn = _spawn_kwargs()
+    try:
+        return await asyncio.create_subprocess_exec(
+            *argv_l,
+            cwd=cwd or None,
+            env=run_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **spawn,
+        )
+    except NotImplementedError:
+        logger.warning(
+            "asyncio exec NotImplemented; falling back to threaded Popen argv0=%s",
+            argv_l[0][:80],
+        )
+        return await asyncio.to_thread(
+            _popen_thread_argv, argv_l, cwd=cwd, env=run_env
         )
 
 

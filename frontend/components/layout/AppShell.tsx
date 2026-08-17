@@ -17,15 +17,22 @@ import { DomainEventBridge } from '@/components/layout/DomainEventBridge';
 import { GlobalChatWs } from '@/components/chat/GlobalChatWs';
 import { useT } from '@/stores/localeStore';
 import { ColResizer } from '@/components/ui/ColResizer';
+import { SidebarLayoutProvider } from '@/components/layout/sidebarLayout';
+import {
+  clampColWidth,
+  shouldSnapCollapse,
+  widthFromDrag,
+  writeStoredWidth,
+} from '@/lib/colResize';
 
 const SIDEBAR_KEY = 'tevarn-sidebar-open';
 const SIDEBAR_W_KEY = 'tk-sb-w';
 const SIDEBAR_W_DEFAULT = 260;
 const SIDEBAR_W_MIN = 200;
-const SIDEBAR_W_MAX = 420;
+const SIDEBAR_W_MAX = 480;
 
-function applySidebarWidth(px: number) {
-  const w = Math.round(Math.min(SIDEBAR_W_MAX, Math.max(SIDEBAR_W_MIN, px)));
+function applySidebarWidth(px: number, min = SIDEBAR_W_MIN) {
+  const w = Math.round(Math.min(SIDEBAR_W_MAX, Math.max(min, px)));
   document.documentElement.style.setProperty('--tk-sb-w', `${w}px`);
   return w;
 }
@@ -51,6 +58,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         : 'disconnected';
   const [retryCount, setRetryCount] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const persistSidebarOpen = useCallback((open: boolean) => {
+    setSidebarOpen(open);
+    try {
+      localStorage.setItem(SIDEBAR_KEY, open ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // 侧边栏宽度：挂载时恢复，拖拽实时写入 CSS 变量，松手持久化，双击复位
   useEffect(() => {
@@ -61,43 +76,61 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       /* ignore */
     }
   }, []);
-  const sbDragState = React.useRef({ startX: 0, startW: SIDEBAR_W_DEFAULT });
-  const onSidebarDragStart = useCallback((clientX: number) => {
+  const sbDragState = React.useRef({
+    startX: 0,
+    startW: SIDEBAR_W_DEFAULT,
+    active: false,
+  });
+  const handleSidebarStart = useCallback((clientX: number) => {
     const cur = parseInt(
       getComputedStyle(document.documentElement).getPropertyValue('--tk-sb-w'),
+      10,
     );
     sbDragState.current = {
       startX: clientX,
-      startW: Number.isFinite(cur) ? cur : SIDEBAR_W_DEFAULT,
+      startW: !sidebarOpen
+        ? SIDEBAR_W_MIN
+        : Number.isFinite(cur) && cur > 0
+          ? cur
+          : SIDEBAR_W_DEFAULT,
+      active: true,
     };
-  }, []);
+    if (!sidebarOpen) persistSidebarOpen(true);
+  }, [persistSidebarOpen, sidebarOpen]);
   const handleSidebarDrag = useCallback(
     (clientX: number) => {
-      if (!sbDragState.current.startX) onSidebarDragStart(clientX);
+      if (!sbDragState.current.active) handleSidebarStart(clientX);
       const { startX, startW } = sbDragState.current;
-      applySidebarWidth(startW + (clientX - startX));
+      const next = widthFromDrag({
+        startX,
+        startW,
+        clientX,
+        edge: 'right',
+      });
+      // Allow shrinking past min during drag so snap-collapse can fire on mouseup.
+      applySidebarWidth(clampColWidth(next, 120, SIDEBAR_W_MAX), 120);
     },
-    [onSidebarDragStart],
+    [handleSidebarStart],
   );
   const handleSidebarDragEnd = useCallback(() => {
-    try {
-      const cur = parseInt(
-        getComputedStyle(document.documentElement).getPropertyValue('--tk-sb-w'),
-      );
-      if (Number.isFinite(cur)) localStorage.setItem(SIDEBAR_W_KEY, String(cur));
-    } catch {
-      /* ignore */
+    sbDragState.current.active = false;
+    const cur = parseInt(
+      getComputedStyle(document.documentElement).getPropertyValue('--tk-sb-w'),
+      10,
+    );
+    if (shouldSnapCollapse(cur, SIDEBAR_W_MIN)) {
+      applySidebarWidth(SIDEBAR_W_DEFAULT);
+      persistSidebarOpen(false);
+      return;
     }
-    sbDragState.current.startX = 0;
-  }, []);
+    const w = applySidebarWidth(cur);
+    writeStoredWidth(SIDEBAR_W_KEY, w);
+  }, [persistSidebarOpen]);
   const handleSidebarReset = useCallback(() => {
     applySidebarWidth(SIDEBAR_W_DEFAULT);
-    try {
-      localStorage.removeItem(SIDEBAR_W_KEY);
-    } catch {
-      /* ignore */
-    }
-  }, []);
+    writeStoredWidth(SIDEBAR_W_KEY, null);
+    persistSidebarOpen(true);
+  }, [persistSidebarOpen]);
 
   useEffect(() => {
     try {
@@ -262,6 +295,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ErrorBoundary>
+      <SidebarLayoutProvider open={sidebarOpen} setOpen={persistSidebarOpen}>
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-page-bg app-ambient">
         <StartupOverlay backendReady={backendReady} stage={startupStage} />
 
@@ -278,15 +312,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <AgentSidebar />
             </div>
           </div>
-          {sidebarOpen && (
-            <ColResizer
-              className="tk-sb-resizer"
-              label="调整侧边栏宽度"
-              onDrag={handleSidebarDrag}
-              onEnd={handleSidebarDragEnd}
-              onDoubleClick={handleSidebarReset}
-            />
-          )}
+          <ColResizer
+            className={sidebarOpen ? 'tk-sb-resizer' : 'tk-sb-resizer tk-sb-resizer-collapsed'}
+            label={sidebarOpen ? '调整同事栏宽度' : '展开同事栏'}
+            onStart={handleSidebarStart}
+            onDrag={handleSidebarDrag}
+            onEnd={handleSidebarDragEnd}
+            onDoubleClick={handleSidebarReset}
+          />
           <main className="tk-main main-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div
               className={`flex min-h-0 flex-1 flex-col self-stretch overflow-x-hidden ${
@@ -304,6 +337,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Chat WS 常驻：切 settings/agents 不断连，stop/confirm/sync 不丢 */}
         {isAuthenticated ? <GlobalChatWs /> : null}
       </div>
+      </SidebarLayoutProvider>
     </ErrorBoundary>
   );
 }

@@ -58,6 +58,10 @@ def test_tool_to_cap_map():
     assert crew_cap_for_tool("command") == "command"
     assert crew_cap_for_tool("file_write") == "file_rw"
     assert crew_cap_for_tool("web_search") == "web_search"
+    assert crew_cap_for_tool("configure_tevarn") == "manage_skill"
+    assert crew_cap_for_tool("update_config") == "manage_skill"
+    assert crew_cap_for_tool("get_system_status") == "current_time"
+    assert crew_cap_for_tool("list_available_models") == "current_time"
 
 
 def test_auto_grant_eligibility():

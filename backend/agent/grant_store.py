@@ -197,6 +197,10 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     "manage_mcp": "manage_mcp",
     "manage_skill": "manage_skill",
     "generate_ppt": "file_rw",
+    "configure_tevarn": "manage_skill",
+    "update_config": "manage_skill",
+    "get_system_status": "current_time",
+    "list_available_models": "current_time",
 }
 
 
@@ -233,6 +237,10 @@ def sync_catalog_from_kernel(kernel: Any | None = None) -> bool:
         TOOL_TO_CREW_CAP.setdefault("generate_ppt", "file_rw")
         TOOL_TO_CREW_CAP.setdefault("current_time", "current_time")
         TOOL_TO_CREW_CAP.setdefault("result_load", "file_read")
+        TOOL_TO_CREW_CAP.setdefault("configure_tevarn", "manage_skill")
+        TOOL_TO_CREW_CAP.setdefault("update_config", "manage_skill")
+        TOOL_TO_CREW_CAP.setdefault("get_system_status", "current_time")
+        TOOL_TO_CREW_CAP.setdefault("list_available_models", "current_time")
         logger.info("grant_store catalog synced from rust (%s entries)", len(TOOL_TO_CREW_CAP))
         return True
     except Exception as e:

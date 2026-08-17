@@ -764,7 +764,7 @@ pre {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 0;
+  min-width: 280px;
   flex: 1 1 auto;
   overflow: hidden;
 }
@@ -964,7 +964,24 @@ button {
 
 /* ── AIOS AgentSidebar（demo v2） ── */
 .tk-sb { display: flex; flex-direction: column; height: 100%; padding: 14px 12px 10px; gap: 8px; overflow: hidden; }
-.tk-sb-head { padding: 0 4px 6px; }
+.tk-sb-head { padding: 0 4px 6px; display: flex; align-items: flex-start; gap: 8px; }
+.tk-sb-collapse {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tk-sb-collapse:hover {
+  background: var(--card-bg-hover);
+  color: var(--foreground);
+}
 .tk-sb-title { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--foreground); }
 .tk-sb-sub { font-size: 11px; color: var(--foreground-dim); margin-top: 1px; }
 .tk-sb-search {
@@ -1511,9 +1528,15 @@ body.tk-col-resizing * {
   height: auto;
 }
 .tk-app-body.sidebar-collapsed .tk-sb-resizer {
-  display: none;
+  left: 56px;
+  opacity: 0.35;
 }
-/* 文件预览手柄：吸附在面板左缘 */
+.tk-app-body.sidebar-collapsed .tk-sb-resizer:hover,
+.tk-app-body.sidebar-collapsed .tk-sb-resizer.active {
+  opacity: 1;
+}
+/* 右侧栏 / 抽屉共用左缘手柄 */
+.tk-edge-resizer,
 .tk-fp-resizer {
   position: absolute;
   top: 0;

@@ -27,6 +27,8 @@ def test_tool_matches_command_cap():
     assert tool_matches_crew_caps("command", ["command", "file_rw"])
     assert tool_matches_crew_caps("python", ["command"])
     assert not tool_matches_crew_caps("command", ["file_rw"])
+    assert tool_matches_crew_caps("configure_tevarn", ["manage_skill"])
+    assert tool_matches_crew_caps("get_system_status", ["current_time"])
 
 
 def test_session_whole_tool_covers_any_command_head():

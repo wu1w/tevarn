@@ -14,6 +14,64 @@ logger = logging.getLogger(__name__)
 _tools_bootstrap_lock: asyncio.Lock | None = None
 
 
+def _try_coerce_int(val: Any) -> int | None:
+    if isinstance(val, bool) or val is None:
+        return None
+    if isinstance(val, int):
+        return int(val)
+    if isinstance(val, float):
+        return int(val) if val.is_integer() else None
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        try:
+            if s.lstrip("+-").isdigit():
+                return int(s)
+            f = float(s)
+            if f.is_integer():
+                return int(f)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return None
+
+
+def _try_coerce_number(val: Any) -> int | float | None:
+    if isinstance(val, bool) or val is None:
+        return None
+    if isinstance(val, int):
+        return int(val)
+    if isinstance(val, float):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return None
+        try:
+            n = float(s)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if n.is_integer() and "." not in s and "e" not in s.lower() and "E" not in s:
+            try:
+                return int(s)
+            except (TypeError, ValueError, OverflowError):
+                return n
+        return n
+    return None
+
+
+def _try_coerce_bool(val: Any) -> bool | None:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in {"true", "yes", "on", "y"}:
+            return True
+        if s in {"false", "no", "off", "n"}:
+            return False
+    return None
+
+
 def _tools_bootstrap_lock_get() -> asyncio.Lock:
     global _tools_bootstrap_lock
     if _tools_bootstrap_lock is None:
@@ -320,6 +378,8 @@ class LoopClusterMixin:
 
         if not schema:
             return cleaned
+        # LLM JSON 常把整数写成 "3"；先按 schema 类型软转换，再 clamp / validate
+        cleaned = self._coerce_tool_args(schema, cleaned)
         # 软夹紧：数值 min/max 越界时 clamp，减少「max_results=3 < min 5」类无意义失败
         cleaned = self._clamp_tool_args(schema, cleaned)
         try:
@@ -331,6 +391,44 @@ class LoopClusterMixin:
         except ValidationError as e:
             raise ValueError(f"Invalid tool arguments: {e.message}") from e
         return cleaned
+
+    @staticmethod
+    def _schema_prop_types(spec: dict) -> set[str]:
+        t = spec.get("type")
+        if isinstance(t, str) and t:
+            return {t}
+        if isinstance(t, (list, tuple)):
+            return {str(x) for x in t if x}
+        return set()
+
+    def _coerce_tool_args(self, schema: dict, cleaned: dict) -> dict:
+        """把 LLM 常见的字符串标量收成 schema 声明的 integer/number/boolean。"""
+        props = schema.get("properties") if isinstance(schema, dict) else None
+        if not isinstance(props, dict) or not cleaned:
+            return cleaned
+        out = dict(cleaned)
+        for key, spec in props.items():
+            if key not in out or not isinstance(spec, dict):
+                continue
+            types = self._schema_prop_types(spec)
+            if not types:
+                continue
+            val = out[key]
+            if "integer" in types:
+                coerced = _try_coerce_int(val)
+                if coerced is not None:
+                    out[key] = coerced
+                    continue
+            if "number" in types:
+                coerced = _try_coerce_number(val)
+                if coerced is not None:
+                    out[key] = coerced
+                    continue
+            if "boolean" in types:
+                coerced = _try_coerce_bool(val)
+                if coerced is not None:
+                    out[key] = coerced
+        return out
 
     def _clamp_tool_args(self, schema: dict, cleaned: dict) -> dict:
         """按 JSON Schema properties 的 minimum/maximum/minLength 做软夹紧（不改类型）。"""

@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useT } from '@/stores/localeStore';
 import { useZh } from '@/hooks/useZh';
 import { useSession } from '@/hooks/useSession';
+import { useSidebarLayout } from '@/components/layout/sidebarLayout';
 import {
   getKernelIdentities,
   getKernelProcesses,
@@ -150,6 +151,7 @@ export function AgentSidebar() {
   const t = useT();
   const router = useRouter();
   const zh = useZh();
+  const sidebar = useSidebarLayout();
   const { switchSession, openContactSession } = useSession();
   const [searchOpen, setSearchOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -435,10 +437,23 @@ export function AgentSidebar() {
   return (
     <div className="tk-sb">
       <div className="tk-sb-head">
-        <div className="tk-sb-title">tevarn</div>
-        <div className="tk-sb-sub">
-          {list.length} {t('nav.agentsRunning' as never)}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="tk-sb-title">tevarn</div>
+          <div className="tk-sb-sub">
+            {list.length} {t('nav.agentsRunning' as never)}
+          </div>
         </div>
+        {sidebar ? (
+          <button
+            type="button"
+            className="tk-sb-collapse"
+            onClick={() => sidebar.setOpen(false)}
+            title={t('layout.collapseContacts' as never)}
+            aria-label={t('layout.collapseContacts' as never)}
+          >
+            ‹
+          </button>
+        ) : null}
       </div>
 
       <button

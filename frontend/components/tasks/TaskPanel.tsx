@@ -6,6 +6,8 @@ import { GoalPanel } from '@/components/chat/GoalPanel';
 import type { ToolCallData } from '@/components/chat/ToolCallPanel';
 import { summarizeToolResult } from '@/lib/chatDisplay';
 import { useT } from '@/stores/localeStore';
+import { ColResizer } from '@/components/ui/ColResizer';
+import { useColResize } from '@/hooks/useColResize';
 
 export interface SessionOperation {
   id: string;
@@ -30,6 +32,8 @@ interface TaskPanelProps {
   /** 点击操作 → 跳到会话中对应消息 */
   onJumpToMessage?: (messageId: string) => void;
   highlightedMessageId?: string | null;
+  /** 嵌在 ChatInspector 内：不要再套一层抽屉 */
+  embedded?: boolean;
 }
 
 function truncate(s: string, n = 80): string {
@@ -215,21 +219,48 @@ export function TaskPanel({
   onClearGoal,
   onJumpToMessage,
   highlightedMessageId,
+  embedded = false,
 }: TaskPanelProps) {
   const t = useT();
   const operations = useMemo(
     () => buildSessionOperations(messages, liveToolCalls),
     [messages, liveToolCalls]
   );
+  const drawerResize = useColResize({
+    storageKey: 'tk-task-w',
+    defaultWidth: 384,
+    min: 280,
+    max: () =>
+      typeof window === 'undefined' ? 560 : Math.min(640, Math.round(window.innerWidth * 0.72)),
+    edge: 'left',
+  });
 
-  if (!isOpen) return null;
+  if (!embedded && !isOpen) return null;
 
   const showGoal =
     !!goal && (goal.status === 'active' || (goal.todos && goal.todos.length > 0));
   const runningCount = operations.filter((o) => o.status === 'running').length;
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-[min(100%,24rem)] flex-col border-l border-border-subtle bg-card-bg/95 shadow-2xl shadow-black/50 backdrop-blur-xl">
+    <div
+      className={
+        embedded
+          ? 'flex h-full min-h-0 flex-col bg-card-bg'
+          : 'fixed inset-y-0 right-0 z-50 flex flex-col border-l border-border-subtle bg-card-bg/95 shadow-2xl shadow-black/50 backdrop-blur-xl'
+      }
+      style={embedded ? undefined : { width: drawerResize.width, minWidth: 280 }}
+    >
+      {embedded ? null : (
+        <ColResizer
+          className="tk-edge-resizer"
+          label={t('layout.resizeDrawer' as never)}
+          onStart={drawerResize.onStart}
+          onDrag={drawerResize.onDrag}
+          onEnd={drawerResize.onEnd}
+          onDoubleClick={drawerResize.onReset}
+        />
+      )}
+      {embedded ? null : (
       <div className="flex flex-shrink-0 items-center justify-between border-b border-border-subtle px-5 py-3.5">
         <div>
           <h2 className="text-base font-semibold text-foreground">{t('chat.taskBoard')}</h2>
@@ -246,8 +277,9 @@ export function TaskPanel({
           </svg>
         </button>
       </div>
+      )}
 
-      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5 scrollbar-thin">
+      <div className={`min-h-0 flex-1 space-y-6 overflow-y-auto scrollbar-thin ${embedded ? 'p-3' : 'p-5'}`}>
         {showGoal && (
           <div>
             <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-foreground-dim">

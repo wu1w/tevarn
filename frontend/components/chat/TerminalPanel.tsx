@@ -3,6 +3,9 @@
 import React, { useEffect, useRef } from 'react';
 import { useTerminalStore, type TerminalEntry } from '@/stores/terminalStore';
 import { useT } from '@/stores/localeStore';
+import { ColResizer } from '@/components/ui/ColResizer';
+import { useColResize } from '@/hooks/useColResize';
+import { maxRightPanelWidth } from '@/lib/colResize';
 
 function formatTime(iso: string): string {
   try {
@@ -74,10 +77,18 @@ function TerminalLine({ entry }: { entry: TerminalEntry }) {
   );
 }
 
-export function TerminalPanel() {
+export function TerminalPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { entries, panelOpen, setPanelOpen, clear } = useTerminalStore();
   const t = useT();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const termResize = useColResize({
+    storageKey: 'tk-term-w',
+    defaultWidth: 280,
+    min: 220,
+    max: () => maxRightPanelWidth(panelRef.current),
+    edge: 'left',
+  });
 
   // 新条目入流时滚到底（保持最新可见）
   useEffect(() => {
@@ -85,12 +96,43 @@ export function TerminalPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [entries.length]);
 
-  if (!panelOpen) return null;
+  if (!embedded && !panelOpen) return null;
 
   const runningCount = entries.filter((e) => e.status === 'running').length;
+  const Root = embedded ? 'div' : 'aside';
 
   return (
-    <aside className="tk-term flex w-80 flex-col border-l border-border-subtle">
+    <Root
+      ref={panelRef as React.Ref<HTMLDivElement & HTMLElement>}
+      className={
+        embedded
+          ? 'tk-term flex h-full min-h-0 flex-col'
+          : 'tk-term relative flex min-w-[220px] shrink-0 flex-col border-l border-border-subtle'
+      }
+      style={embedded ? undefined : { width: termResize.width, flex: '0 1 auto' }}
+    >
+      {embedded ? null : (
+        <ColResizer
+          className="tk-edge-resizer"
+          label={t('layout.resizeTerminal' as never)}
+          onStart={termResize.onStart}
+          onDrag={termResize.onDrag}
+          onEnd={termResize.onEnd}
+          onDoubleClick={termResize.onReset}
+        />
+      )}
+      {embedded ? (
+        <div className="flex h-7 items-center gap-1.5 border-b border-border-subtle px-2 text-[10px] text-foreground-dim">
+          {entries.length > 0 && <span className="num">{entries.length}</span>}
+          {runningCount > 0 && <span className="tk-term-cursor" />}
+          <span className="flex-1" />
+          {entries.length > 0 && (
+            <button type="button" onClick={clear} className="tk-term-btn">
+              {t('terminal.clear')}
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="tk-term-head">
         <span className="tk-term-tag">TERM</span>
         <span className="tk-term-title">{t('terminal.title')}</span>
@@ -104,15 +146,18 @@ export function TerminalPanel() {
               {t('terminal.clear')}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setPanelOpen(false)}
-            className="tk-term-btn"
-          >
-            {t('terminal.collapse')}
-          </button>
+          {embedded ? null : (
+            <button
+              type="button"
+              onClick={() => setPanelOpen(false)}
+              className="tk-term-btn"
+            >
+              {t('terminal.collapse')}
+            </button>
+          )}
         </div>
       </div>
+      )}
 
       <div
         ref={scrollRef}
@@ -126,6 +171,6 @@ export function TerminalPanel() {
           entries.map((e) => <TerminalLine key={e.id} entry={e} />)
         )}
       </div>
-    </aside>
+    </Root>
   );
 }

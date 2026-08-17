@@ -7,6 +7,10 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ComposerMenuPortal,
+  isComposerPopoverEvent,
+} from '@/components/chat/ComposerMenuPortal';
+import {
   getModelCatalog,
   selectCatalogCredential,
   selectCatalogModel,
@@ -23,9 +27,16 @@ interface ModelPickerProps {
   onChanged?: (providerId: string, model: string, providerName: string) => void;
   /** 当前会话 id：传入时切换会同步更新该会话的 LLM 快照，使切换立即生效 */
   sessionId?: string;
+  /** 输入栏内嵌：只显示模型名，避免再占一行底栏 */
+  compact?: boolean;
 }
 
-export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPickerProps) {
+export function ModelPicker({
+  disabled = false,
+  onChanged,
+  sessionId,
+  compact = false,
+}: ModelPickerProps) {
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [open, setOpen] = useState(false);
@@ -34,6 +45,7 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
   const [selectedProviderId, setSelectedProviderId] = useState('');
   const [busy, setBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -108,13 +120,14 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
     };
   }, [load]);
 
-  // 点击外部关闭
+  // 点击外部关闭（菜单已 portal 到 body，不能只看 rootRef）
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t)) return;
+      if (isComposerPopoverEvent(e)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -215,37 +228,55 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
   return (
     <div ref={rootRef} className="relative">
       <button
-        type="button"onClick={handleOpen}
+        ref={btnRef}
+        type="button"
+        onClick={handleOpen}
         disabled={disabled}
-        className={`inline-flex max-w-full items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs transition disabled:opacity-40 ${
+        className={`inline-flex max-w-full items-center rounded-lg text-xs transition disabled:opacity-40 ${
+          compact ? 'gap-1 px-1.5 py-1' : 'gap-1.5 px-2.5 py-1'
+        } ${
           catalog?.active_model
-            ? 'text-foreground hover:bg-brand-cyan/10': 'text-amber-500/90 hover:bg-brand-cyan/10'}`}
+            ? 'text-foreground hover:bg-brand-cyan/10'
+            : 'text-amber-500/90 hover:bg-brand-cyan/10'
+        }`}
         title={t('modelPicker.title')}
       >
         <span className="text-sm leading-none" aria-hidden>
           {activeProvider?.icon || ''}
         </span>
-        <span className="truncate font-medium text-foreground">
-          {labelProvider}
-        </span>
-        <span className="text-foreground-dim">·</span>
-        <span className="max-w-[160px] truncate font-mono text-[11px] text-brand-cyan">
+        {!compact ? (
+          <>
+            <span className="truncate font-medium text-foreground">
+              {labelProvider}
+            </span>
+            <span className="text-foreground-dim">·</span>
+          </>
+        ) : null}
+        <span
+          className={`truncate font-mono text-[11px] text-brand-cyan ${
+            compact ? 'max-w-[9rem]' : 'max-w-[160px]'
+          }`}
+        >
           {labelModel}
         </span>
-        {catalog?.providers?.length ? (
+        {!compact && catalog?.providers?.length ? (
           <span className="rounded bg-card-bg/60 px-1 text-[9px] text-foreground-dim">
             {t('modelPicker.providerCount').replace('{n}', String(catalog.providers.length))}
           </span>
         ) : null}
         <svg
           className={`h-3.5 w-3.5 shrink-0 text-foreground-dim transition ${open ? 'rotate-180' : ''}`}
-          fill="none"viewBox="0 0 24 24"stroke="currentColor">
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
-      {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 flex w-[min(92vw,440px)] overflow-hidden tk-card-solid rounded-2xl shadow-2xl shadow-black/40">
+      {open ? (
+      <ComposerMenuPortal open={open} anchorRef={btnRef} align={compact ? 'end' : 'start'}>
+        <div className="flex max-h-full w-[min(92vw,440px)] overflow-hidden rounded-2xl border border-border-default bg-elevated-bg shadow-2xl shadow-black/40">
           {/* 左：供应商 */}
           <div className="w-[38%] border-r border-border-subtle bg-card-bg/50">
             <div className="border-b border-border-subtle px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-dim">
@@ -436,7 +467,8 @@ export function ModelPicker({ disabled = false, onChanged, sessionId }: ModelPic
             )}
           </div>
         </div>
-      )}
+      </ComposerMenuPortal>
+      ) : null}
     </div>
   );
 }

@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useT } from '@/stores/localeStore';
 import { useAuthStore } from '@/stores/authStore';
+import { ColResizer } from '@/components/ui/ColResizer';
+import { useColResize } from '@/hooks/useColResize';
 
 interface ThinkingStep {
   iteration: number;
@@ -42,13 +44,22 @@ interface TransparencyPanelProps {
   sessionId: string;
   visible: boolean;
   onClose: () => void;
+  embedded?: boolean;
 }
 
-export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyPanelProps) {
+export function TransparencyPanel({ sessionId, visible, onClose, embedded = false }: TransparencyPanelProps) {
   const t = useT();
   const [trace, setTrace] = useState<TraceData | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'thinking' | 'tools' | 'rag'>('thinking');
+  const traceResize = useColResize({
+    storageKey: 'tk-trace-w',
+    defaultWidth: 384,
+    min: 280,
+    max: () =>
+      typeof window === 'undefined' ? 560 : Math.min(640, Math.round(window.innerWidth * 0.72)),
+    edge: 'left',
+  });
 
   const fetchTrace = useCallback(async () => {
     if (!sessionId) return;
@@ -71,10 +82,10 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
   }, [sessionId]);
 
   useEffect(() => {
-    if (visible) fetchTrace();
-  }, [visible, fetchTrace]);
+    if (visible || embedded) fetchTrace();
+  }, [visible, embedded, fetchTrace]);
 
-  if (!visible) return null;
+  if (!embedded && !visible) return null;
 
   const statusIcon = (s: string) => {
     if (s === 'completed') return '';
@@ -84,8 +95,25 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 flex w-96 flex-col border-l border-border-subtle bg-card-bg shadow-xl">
-      {/* Header */}
+    <div
+      className={
+        embedded
+          ? 'flex h-full min-h-0 flex-col bg-card-bg'
+          : 'fixed inset-y-0 right-0 z-40 flex flex-col border-l border-border-subtle bg-card-bg shadow-xl'
+      }
+      style={embedded ? undefined : { width: traceResize.width, minWidth: 280 }}
+    >
+      {embedded ? null : (
+        <ColResizer
+          className="tk-edge-resizer"
+          label={t('layout.resizeDrawer' as never)}
+          onStart={traceResize.onStart}
+          onDrag={traceResize.onDrag}
+          onEnd={traceResize.onEnd}
+          onDoubleClick={traceResize.onReset}
+        />
+      )}
+      {embedded ? null : (
       <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
         <h3 className="text-sm font-semibold text-foreground"> 透明化 Agent</h3>
         <button
@@ -96,6 +124,7 @@ export function TransparencyPanel({ sessionId, visible, onClose }: TransparencyP
           </svg>
         </button>
       </div>
+      )}
 
       {/* Tabs */}
       <div className="flex border-b border-border-subtle">

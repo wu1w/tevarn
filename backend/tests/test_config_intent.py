@@ -64,3 +64,46 @@ def test_pending_api_key_form():
     m = try_pending_mcp_key("API Key：IWimbUB9VSgFwoNpUmmTHeZZmrvMrarR", "tavily")
     assert m is not None
     assert m.payload["label"] == "tavily"
+
+
+def test_coerce_integer_string_before_validate():
+    mixin = LoopClusterMixin()
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "num_results": {"type": "integer", "minimum": 1, "maximum": 15},
+        },
+        "required": ["query"],
+    }
+    out = mixin._validate_tool_args(schema, {"query": "tevarn", "num_results": "3"})
+    assert out["num_results"] == 3
+    assert isinstance(out["num_results"], int)
+
+
+def test_coerce_then_clamp_integer():
+    mixin = LoopClusterMixin()
+    schema = {
+        "type": "object",
+        "properties": {
+            "max_results": {"type": "integer", "minimum": 5, "maximum": 20},
+        },
+    }
+    out = mixin._validate_tool_args(schema, {"max_results": "3"})
+    assert out["max_results"] == 5
+
+
+def test_configure_tevarn_topic_status_not_overview():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from backend.skills.builtins.configure_tevarn_skill import ConfigureTevarnSkill
+
+    with patch.object(
+        ConfigureTevarnSkill,
+        "_status",
+        new=AsyncMock(return_value="【Tevarn 系统状态】\nok"),
+    ):
+        out = asyncio.run(ConfigureTevarnSkill().execute(topic="status"))
+    assert "【Tevarn 系统状态】" in out
+    assert "总览" not in out

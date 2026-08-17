@@ -17,6 +17,8 @@ import {
 import { useT } from '@/stores/localeStore';
 import { useToastStore } from '@/stores/toastStore';
 import { ColResizer } from '@/components/ui/ColResizer';
+import { useColResize } from '@/hooks/useColResize';
+import { maxRightPanelWidth } from '@/lib/colResize';
 
 function getToken(): string | null {
   return getPersistedAuthToken();
@@ -128,15 +130,25 @@ function resolveKind(artifact: ChatArtifact): NonNullable<ChatArtifact['kind']> 
 export interface FilePreviewHostProps {
   artifact: ChatArtifact | null;
   onClose: () => void;
+  /** 嵌在 ChatInspector 内：不要自己再开一列 */
+  embedded?: boolean;
 }
 
-export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
+export function FilePreviewHost({ artifact, onClose, embedded = false }: FilePreviewHostProps) {
   const t = useT();
   const addToast = useToastStore((s) => s.addToast);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState>({ type: 'empty' });
   const [objectUrls, setObjectUrls] = useState<string[]>([]);
+  const panelRef = React.useRef<HTMLElement | null>(null);
+  const fpResize = useColResize({
+    storageKey: 'tk-fp-w',
+    defaultWidth: 480,
+    min: 280,
+    max: () => maxRightPanelWidth(panelRef.current),
+    edge: 'left',
+  });
 
   const kind = artifact ? resolveKind(artifact) : 'other';
   const title = artifact?.name || '';
@@ -333,68 +345,43 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
     return preview.sheets[preview.active] || preview.sheets[0] || null;
   }, [preview]);
 
-  // 面板宽度可拖拽：默认 min(48vw, 40rem)，拖拽后固定为像素并持久化，双击复位
-  const FP_W_KEY = 'tk-fp-w';
-  const [panelW, setPanelW] = useState<number | null>(null);
-  useEffect(() => {
-    try {
-      const saved = Number(localStorage.getItem(FP_W_KEY));
-      if (saved >= 320) setPanelW(saved);
-    } catch {
-      /* ignore */
+  if (!artifact) {
+    if (embedded) {
+      return (
+        <div
+          className="flex h-full items-center justify-center px-6 text-center text-xs text-foreground-dim"
+          data-testid="file-preview-host"
+        >
+          {t('chat.previewEmpty')}
+        </div>
+      );
     }
-  }, []);
-  const fpDrag = React.useRef({ startX: 0, startW: 0 });
-  const clampFpW = (px: number) =>
-    Math.round(Math.min(window.innerWidth * 0.85, Math.max(320, px)));
-  const handleFpDrag = useCallback(
-    (clientX: number) => {
-      if (!fpDrag.current.startW) {
-        fpDrag.current = {
-          startX: clientX,
-          startW: panelW ?? Math.min(window.innerWidth * 0.48, 640),
-        };
-      }
-      const { startX, startW } = fpDrag.current;
-      setPanelW(clampFpW(startW + (startX - clientX))); // 左缘手柄：向左拖=更宽
-    },
-    [panelW],
-  );
-  const handleFpDragEnd = useCallback(() => {
-    fpDrag.current.startW = 0;
-    setPanelW((w) => {
-      try {
-        if (w) localStorage.setItem(FP_W_KEY, String(w));
-      } catch {
-        /* ignore */
-      }
-      return w;
-    });
-  }, []);
-  const handleFpReset = useCallback(() => {
-    setPanelW(null);
-    try {
-      localStorage.removeItem(FP_W_KEY);
-    } catch {
-      /* ignore */
-    }
-  }, []);
+    return null;
+  }
 
-  if (!artifact) return null;
+  const Root = embedded ? 'div' : 'aside';
 
   return (
-    <aside
-      className="relative flex h-full w-full max-w-2xl flex-shrink-0 flex-col border-l border-border-subtle bg-card-bg shadow-xl sm:w-[min(48vw,40rem)]"
-      style={panelW ? { width: panelW, maxWidth: 'none' } : undefined}
+    <Root
+      ref={panelRef as React.Ref<HTMLDivElement & HTMLElement>}
+      className={
+        embedded
+          ? 'flex h-full min-h-0 flex-col bg-card-bg'
+          : 'relative flex h-full shrink-0 flex-col border-l border-border-subtle bg-card-bg shadow-xl'
+      }
+      style={embedded ? undefined : { width: fpResize.width, minWidth: 280, flex: '0 1 auto' }}
       data-testid="file-preview-host"
     >
-      <ColResizer
-        className="tk-fp-resizer"
-        label="调整预览宽度"
-        onDrag={handleFpDrag}
-        onEnd={handleFpDragEnd}
-        onDoubleClick={handleFpReset}
-      />
+      {embedded ? null : (
+        <ColResizer
+          className="tk-edge-resizer"
+          label={t('layout.resizePreview' as never)}
+          onStart={fpResize.onStart}
+          onDrag={fpResize.onDrag}
+          onEnd={fpResize.onEnd}
+          onDoubleClick={fpResize.onReset}
+        />
+      )}
       <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-foreground">{title}</div>
@@ -564,6 +551,6 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
           </div>
         )}
       </div>
-    </aside>
+    </Root>
   );
 }

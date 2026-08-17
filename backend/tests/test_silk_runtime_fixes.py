@@ -40,6 +40,16 @@ def test_locale_has_streaming_action_keys():
         "chat.loadOlder",
         "chat.historyStart",
         "chat.duplicateIgnored",
+        "chat.toolsMenu",
+        "chat.moreActions",
+        "chat.inspectorFiles",
+        "chat.inspectorPreview",
+        "chat.inspectorRun",
+        "chat.inspectorTrace",
+        "chat.inspectorClose",
+        "chat.previewEmpty",
+        "chat.contextFiles",
+        "chat.contextGoal",
     )
     for name in ("zh.json", "en.json"):
         data = json.loads((ROOT / "frontend" / "locales" / name).read_text(encoding="utf-8"))
@@ -344,3 +354,42 @@ def test_tevarn_live_product_ids_not_takton():
         encoding="utf-8"
     )
     assert "else if (!isStreaming)" not in inp
+    assert "IconMore" in inp
+    assert "chat.toolsMenu" in inp
+    assert "ComposerMenuPortal" in inp
+    picker = (ROOT / "frontend" / "components" / "chat" / "ModelPicker.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "ComposerMenuPortal" in picker
+    assert "handleSend('queue')" in inp
+    assert "handleSend('interrupt')" in inp
+    assert "handleSend('steer')" in inp
+    assert "APP_VERSION" not in inp
+
+    page = (ROOT / "frontend" / "app" / "chat" / "page.tsx").read_text(encoding="utf-8")
+    assert "ComposerContextStrip" in page
+    assert "ChatInspector" in page
+    assert "<WorkspaceDock />" not in page
+    assert "<TerminalPanel />" not in page
+    assert "<TaskPanel" not in page
+    assert "<TransparencyPanel" not in page
+    assert "<FilePreviewHost" not in page
+    assert "<ActivityPanel" not in page
+    inspect = (ROOT / "frontend" / "components" / "chat" / "ChatInspector.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "embedded" in inspect
+    ctx = (ROOT / "frontend" / "components" / "chat" / "ComposerContextStrip.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "session-artifacts-bar" in ctx
+
+
+def test_loop_cluster_coerces_tool_arg_types():
+    src = (ROOT / "backend" / "agent" / "loop_cluster.py").read_text(encoding="utf-8")
+    assert "_coerce_tool_args" in src
+    exec_src = (ROOT / "backend" / "services" / "tools" / "executors.py").read_text(
+        encoding="utf-8"
+    )
+    assert "create_process_exec" in exec_src
+    assert "asyncio.create_subprocess_exec(py, script_path" not in exec_src

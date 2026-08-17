@@ -14,6 +14,7 @@ import { useThemeStore } from '@/stores/themeStore';
 import { useQuery } from '@tanstack/react-query';
 import { getKernelEscalations, getEvolutionProposals } from '@/lib/api';
 import { AppLogo } from '@/components/brand/AppLogo';
+import { useSidebarLayout } from '@/components/layout/sidebarLayout';
 
 type RailItem = {
   href: string;
@@ -60,6 +61,7 @@ const PX_ICONS = {
 export function IconRail() {
   const pathname = usePathname() || '/';
   const t = useT();
+  const sidebar = useSidebarLayout();
   const resolved = useThemeStore((s) => s.resolved);
   const setTheme = useThemeStore((s) => s.setTheme);
   // 审批 badge = 提权 pending + 进化 pending（与审批中心两 tab 同源）
@@ -108,8 +110,18 @@ export function IconRail() {
             key={item.href}
             href={item.href}
             scroll={false}
-            title={t(item.titleKey as never)}
+            title={
+              item.href === '/chat' && isActive(item)
+                ? t('layout.toggleContacts' as never)
+                : t(item.titleKey as never)
+            }
             className={`tk-rail-btn ${isActive(item) ? 'active' : ''}`}
+            onClick={(e) => {
+              if (item.href === '/chat' && isActive(item) && sidebar) {
+                e.preventDefault();
+                sidebar.toggle();
+              }
+            }}
           >
             {item.icon}
             {b > 0 && <span className="tk-rail-badge-count">{b > 99 ? '99+' : b}</span>}

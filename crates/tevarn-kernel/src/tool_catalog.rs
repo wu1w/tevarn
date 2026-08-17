@@ -60,6 +60,11 @@ pub static TOOL_TO_CREW_CAP: &[(&str, &str)] = &[
     ("manage_skill", "manage_skill"),
     ("manage_mcp", "manage_mcp"),
     ("generate_ppt", "file_rw"),
+    // Dialog config / status tools (token.allows uses tool name → abstract cap)
+    ("configure_tevarn", "manage_skill"),
+    ("update_config", "manage_skill"),
+    ("get_system_status", "current_time"),
+    ("list_available_models", "current_time"),
 ];
 
 fn map() -> BTreeMap<&'static str, &'static str> {
@@ -207,5 +212,19 @@ mod tests {
         assert_eq!(crew_cap_for_tool("current_time"), Some("current_time"));
         assert_eq!(crew_cap_for_tool("result_load"), Some("file_read"));
         assert_eq!(crew_cap_for_tool("generate_ppt"), Some("file_rw"));
+        assert_eq!(crew_cap_for_tool("configure_tevarn"), Some("manage_skill"));
+        assert_eq!(crew_cap_for_tool("update_config"), Some("manage_skill"));
+        assert_eq!(crew_cap_for_tool("get_system_status"), Some("current_time"));
+        assert_eq!(crew_cap_for_tool("list_available_models"), Some("current_time"));
+    }
+
+    #[test]
+    fn manage_skill_covers_configure_tevarn() {
+        let caps: BTreeSet<String> = ["manage_skill".into()].into_iter().collect();
+        assert!(capability_matches("configure_tevarn", &caps));
+        assert!(capability_matches("update_config", &caps));
+        let time: BTreeSet<String> = ["current_time".into()].into_iter().collect();
+        assert!(capability_matches("get_system_status", &time));
+        assert!(capability_matches("list_available_models", &time));
     }
 }

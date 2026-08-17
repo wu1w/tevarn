@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 
 interface ColResizerProps {
+  /** 按下瞬间（记录起点，避免 clientX=0 被当成未开始） */
+  onStart?: (clientX: number) => void;
   /** 拖动中回调（clientX 实时值），父组件自行换算宽度 */
   onDrag: (clientX: number) => void;
   /** 松手回调（一般用于持久化） */
@@ -18,6 +20,7 @@ interface ColResizerProps {
  * 拖拽期间 body 加 .tk-col-resizing 统一换光标并屏蔽子元素指针事件。
  */
 export function ColResizer({
+  onStart,
   onDrag,
   onEnd,
   onDoubleClick,
@@ -28,8 +31,10 @@ export function ColResizer({
 
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setActive(true);
     document.body.classList.add('tk-col-resizing');
+    onStart?.(e.clientX);
     const move = (ev: PointerEvent) => onDrag(ev.clientX);
     const up = (ev: PointerEvent) => {
       document.removeEventListener('pointermove', move);

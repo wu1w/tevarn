@@ -11,12 +11,22 @@ import React, {
 } from 'react';
 import { uploadFile, UploadResult, getDevices } from '@/lib/api';
 import { ModelPicker } from './ModelPicker';
-import { CHAT_TOOL_ICONS, IconSend } from '@/components/icons/ChatIcons';
+import {
+  CHAT_TOOL_ICONS,
+  IconMore,
+  IconPaperclip,
+  IconSend,
+  IconStop,
+  IconTool,
+} from '@/components/icons/ChatIcons';
+import {
+  ComposerMenuPortal,
+  isComposerPopoverEvent,
+} from '@/components/chat/ComposerMenuPortal';
 import { ClusterModePanel } from '@/components/subagent/SubAgentPanel';
 import { subAgentApi } from '@/lib/subagent-api';
 import { useT } from '@/stores/localeStore';
 import { useToastStore } from '@/stores/toastStore';
-import { APP_VERSION } from '@/lib/appVersion';
 import type { SubAgent } from '@/types/subagent';
 import type { Device } from '@/types';
 
@@ -61,6 +71,11 @@ const TOOLS = [
   { key: 'cluster', toggle: true, group: 'think' },
   { key: 'image', toggle: true, group: 'action' },
 ] as const;
+
+const MODE_TOOLS = TOOLS.filter((tool) => tool.key !== 'attachment');
+
+const COMPOSER_ICON_BTN =
+  'inline-flex h-8 w-8 items-center justify-center rounded-[3px] text-foreground-dim transition-colors hover:bg-card-bg-hover hover:text-foreground-muted disabled:opacity-40';
 
 /** 输入 / 时弹出的命令菜单（与后端 slash_commands 对齐） */
 const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
@@ -117,9 +132,13 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashFilter, setSlashFilter] = useState('');
   const [slashIndex, setSlashIndex] = useState(0);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const composerRootRef = useRef<HTMLDivElement | null>(null);
+  const toolsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const sendingRef = useRef(false);
   const isEditing = !!initialContent;
   const inputLocked = disabled || uploading;
@@ -180,6 +199,29 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!toolsOpen && !moreOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const root = composerRootRef.current;
+      const t = e.target as Node;
+      if (root?.contains(t) || isComposerPopoverEvent(e)) return;
+      setToolsOpen(false);
+      setMoreOpen(false);
+    };
+    const onKey = (e: Event) => {
+      if ((e as globalThis.KeyboardEvent).key === 'Escape') {
+        setToolsOpen(false);
+        setMoreOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [toolsOpen, moreOpen]);
 
   const mentionCandidates = devices.filter((d) => {
     if (!mentionFilter) return true;
@@ -352,6 +394,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   const handleSend = (control?: 'steer' | 'queue' | 'interrupt') => {
+    setToolsOpen(false);
+    setMoreOpen(false);
     const trimmed = content.trim();
     const readyAtts = attachments.filter(isSendableAttachment);
     const pending = attachments.some((a) => a.status === 'uploading');
@@ -567,6 +611,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       fileInputRef.current?.click();
       return;
     }
+    setToolsOpen(false);
     toggleMode(key);
   };
 
@@ -734,6 +779,10 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           <textarea
             ref={textareaRef}
             aria-label={t('chat.inputHint')}
+            onFocus={() => {
+              setToolsOpen(false);
+              setMoreOpen(false);
+            }}
             value={content}
             onChange={(e) => {
               if (inputLocked) return;
@@ -781,9 +830,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             readOnly={inputLocked}
             rows={2}
             data-testid="chat-composer-textarea"
-            className="chat-surface chat-composer-textarea block w-full max-w-full resize-none border-0 bg-transparent px-3.5 pb-2 pt-3.5 text-[14px] leading-relaxed text-foreground placeholder:text-input-placeholder focus:outline-none focus:ring-0"
+            className="chat-surface chat-composer-textarea block w-full max-w-full resize-none border-0 bg-transparent px-3.5 pb-1.5 pt-3 text-[14px] leading-relaxed text-foreground placeholder:text-input-placeholder focus:outline-none focus:ring-0"
             style={{
-              minHeight: '64px',
+              minHeight: '52px',
               maxHeight: '200px',
               width: '100%',
               pointerEvents: 'auto',
@@ -791,145 +840,221 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               userSelect: 'text',
             }}
           />
-          {slashOpen && slashCandidates.length > 0 && (
-            <ul
-              className="absolute bottom-full left-0 z-40 mb-1 max-h-48 w-72 overflow-auto tk-card-solid py-1 shadow-xl"
-              data-no-composer-focus
-            >
-              <li className="px-3 py-1 text-[10px] text-foreground-dim">命令 · Enter 发送</li>
-              {slashCandidates.map((c, i) => (
-                <li key={c.name}>
-                  <button
-                    type="button"
-                    onMouseDown={(ev) => {
-                      ev.preventDefault();
-                      applySlash(c.name);
-                    }}
-                    className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs ${
-                      i === slashIndex
-                        ? 'bg-brand-purple/20 text-foreground'
-                        : 'text-foreground-muted hover:bg-card-bg-hover'
-                    }`}
-                  >
-                    <span className="font-mono text-brand-cyan">/{c.name}</span>
-                    <span className="truncate text-[10px] text-foreground-dim">{c.hint}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {mentionOpen && mentionCandidates.length > 0 && (
-            <ul
-              className="absolute bottom-full left-0 z-40 mb-1 max-h-40 w-64 overflow-auto tk-card-solid py-1 shadow-xl"
-              data-no-composer-focus
-            >
-              {mentionCandidates.map((d, i) => {
-                const ms = (d.config as { last_latency_ms?: number })?.last_latency_ms;
-                return (
-                  <li key={d.id}>
+          {slashOpen && slashCandidates.length > 0 ? (
+            <ComposerMenuPortal open anchorRef={textareaRef} align="start">
+              <ul className="max-h-48 w-72 overflow-auto rounded-md border border-border-default bg-elevated-bg py-1 shadow-xl">
+                <li className="px-3 py-1 text-[10px] text-foreground-dim">命令 · Enter 发送</li>
+                {slashCandidates.map((c, i) => (
+                  <li key={c.name}>
                     <button
                       type="button"
                       onMouseDown={(ev) => {
                         ev.preventDefault();
-                        applyMention(d.name);
+                        applySlash(c.name);
                       }}
-                      className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs ${
-                        i === mentionIndex
+                      className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs ${
+                        i === slashIndex
                           ? 'bg-brand-purple/20 text-foreground'
                           : 'text-foreground-muted hover:bg-card-bg-hover'
                       }`}
                     >
-                      <span>
-                        @{d.name}
-                        <span className="ml-1 text-[10px] text-foreground-dim">{d.status}</span>
-                      </span>
-                      {typeof ms === 'number' && (
-                        <span className="font-mono text-[10px] text-brand-cyan">{ms}ms</span>
-                      )}
+                      <span className="font-mono text-brand-cyan">/{c.name}</span>
+                      <span className="truncate text-[10px] text-foreground-dim">{c.hint}</span>
                     </button>
                   </li>
-                );
-              })}
-            </ul>
-          )}
+                ))}
+              </ul>
+            </ComposerMenuPortal>
+          ) : null}
+          {mentionOpen && mentionCandidates.length > 0 ? (
+            <ComposerMenuPortal open anchorRef={textareaRef} align="start">
+              <ul className="max-h-40 w-64 overflow-auto rounded-md border border-border-default bg-elevated-bg py-1 shadow-xl">
+                {mentionCandidates.map((d, i) => {
+                  const ms = (d.config as { last_latency_ms?: number })?.last_latency_ms;
+                  return (
+                    <li key={d.id}>
+                      <button
+                        type="button"
+                        onMouseDown={(ev) => {
+                          ev.preventDefault();
+                          applyMention(d.name);
+                        }}
+                        className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs ${
+                          i === mentionIndex
+                            ? 'bg-brand-purple/20 text-foreground'
+                            : 'text-foreground-muted hover:bg-card-bg-hover'
+                        }`}
+                      >
+                        <span>
+                          @{d.name}
+                          <span className="ml-1 text-[10px] text-foreground-dim">{d.status}</span>
+                        </span>
+                        {typeof ms === 'number' && (
+                          <span className="font-mono text-[10px] text-brand-cyan">{ms}ms</span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </ComposerMenuPortal>
+          ) : null}
         </label>
 
-        {/* 卡内工具行：左工具 chips，右发送/停止 —— 方角 + 阶梯硬阴影，无渐变 */}
-        <div className="flex flex-wrap items-center gap-1 px-2.5 pb-2.5 pt-1" data-no-composer-focus>
-          {(['utility', 'think', 'action'] as const).map((group, gi) => (
-            <React.Fragment key={group}>
-              {gi > 0 && (
-                <span className="mx-0.5 hidden h-3.5 w-px bg-border-default sm:inline-block" aria-hidden />
-              )}
-              {TOOLS.filter((tool) => tool.group === group).map((tool) => {
-                const isActive = activeModes.has(tool.key);
-                const ToolIcon = CHAT_TOOL_ICONS[tool.key];
-                return (
-                  <button
-                    key={tool.key}
-                    type="button"
-                    onClick={() => handleToolClick(tool.key)}
-                    disabled={inputLocked}
-                    className={`chat-tool-chip inline-flex items-center gap-1.5 rounded-[3px] px-2 py-1 transition-colors duration-150 ${
-                      isActive
-                        ? 'border border-brand-purple/40 bg-brand-purple/10 text-brand-purple'
-                        : 'border border-transparent text-foreground-dim hover:bg-card-bg-hover hover:text-foreground-muted'
-                    } disabled:opacity-40`}
-                    title={t(`chat.tool.${tool.key}` as never)}
-                  >
-                    {ToolIcon ? <ToolIcon className="h-3.5 w-3.5" /> : null}
-                    <span className="hidden text-[11px] font-medium lg:inline">
-                      {t(`chat.tool.${tool.key}` as never)}
-                    </span>
-                  </button>
-                );
-              })}
-            </React.Fragment>
-          ))}
+        {/* 卡内工具行：overflow 必须 visible，否则上拉菜单会被裁成空白 */}
+        <div className="relative flex flex-nowrap items-center gap-0.5 overflow-visible px-2 pb-2 pt-0.5" data-no-composer-focus>
+          <button
+            type="button"
+            onClick={() => handleToolClick('attachment')}
+            disabled={inputLocked}
+            className={COMPOSER_ICON_BTN}
+            title={t('chat.tool.attachment')}
+            aria-label={t('chat.tool.attachment')}
+          >
+            <IconPaperclip className="h-3.5 w-3.5" />
+          </button>
+          <div className="relative">
+            <button
+              ref={toolsBtnRef}
+              type="button"
+              onClick={() => {
+                setMoreOpen(false);
+                setToolsOpen((v) => !v);
+              }}
+              disabled={inputLocked}
+              className={`${COMPOSER_ICON_BTN} ${
+                toolsOpen || MODE_TOOLS.some((tool) => activeModes.has(tool.key))
+                  ? 'bg-brand-purple/10 text-brand-purple'
+                  : ''
+              }`}
+              title={t('chat.toolsMenu')}
+              aria-label={t('chat.toolsMenu')}
+              aria-expanded={toolsOpen}
+            >
+              <IconTool className="h-3.5 w-3.5" />
+            </button>
+            <ComposerMenuPortal open={toolsOpen} anchorRef={toolsBtnRef} align="start">
+              <div className="min-w-[11rem] overflow-hidden rounded-md border border-border-default bg-elevated-bg py-1 shadow-[var(--hard-shadow)]">
+                {MODE_TOOLS.map((tool) => {
+                  const isActive = activeModes.has(tool.key);
+                  const ToolIcon = CHAT_TOOL_ICONS[tool.key];
+                  return (
+                    <button
+                      key={tool.key}
+                      type="button"
+                      disabled={inputLocked}
+                      onClick={() => handleToolClick(tool.key)}
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                        isActive
+                          ? 'bg-brand-purple/10 text-brand-purple'
+                          : 'text-foreground-muted hover:bg-card-bg-hover'
+                      }`}
+                    >
+                      {ToolIcon ? <ToolIcon className="h-3.5 w-3.5" /> : null}
+                      <span className="flex-1">{t(`chat.tool.${tool.key}` as never)}</span>
+                      {isActive ? <span className="text-[10px]">✓</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </ComposerMenuPortal>
+          </div>
+          {MODE_TOOLS.filter((tool) => activeModes.has(tool.key)).map((tool) => {
+            const ToolIcon = CHAT_TOOL_ICONS[tool.key];
+            return (
+              <button
+                key={tool.key}
+                type="button"
+                onClick={() => handleToolClick(tool.key)}
+                className="inline-flex h-7 max-w-[7.5rem] shrink-0 items-center gap-1 rounded-[3px] border border-brand-purple/40 bg-brand-purple/10 px-1.5 text-[11px] font-medium text-brand-purple"
+                title={t(`chat.tool.${tool.key}` as never)}
+              >
+                {ToolIcon ? <ToolIcon className="h-3 w-3" /> : null}
+                <span className="hidden truncate sm:inline">
+                  {t(`chat.tool.${tool.key}` as never)}
+                </span>
+                <span aria-hidden className="text-brand-purple/70">
+                  ×
+                </span>
+              </button>
+            );
+          })}
           {uploading && (
             <span className="animate-pulse text-[10px] text-foreground-dim">{t('chat.uploading')}</span>
           )}
-          <span className="flex-1" />
+          <span className="min-w-2 flex-1" />
+          {showModelPicker ? (
+            <div className="shrink-0">
+              <ModelPicker
+                compact
+                disabled={inputLocked}
+                onChanged={onModelChanged}
+                sessionId={sessionId}
+              />
+            </div>
+          ) : null}
           {isStreaming ? (
-            <div className="flex flex-shrink-0 items-center gap-1.5">
+            <div className="flex flex-shrink-0 items-center gap-1">
               <button
                 type="button"
                 onClick={() => onStopStreaming?.()}
                 disabled={!onStopStreaming}
                 aria-label={t('chat.stopGenerating')}
-                className="px-btn inline-flex h-8 items-center gap-1 rounded-[3px] border border-border-subtle bg-elevated-bg px-2.5 text-[11px] font-medium text-foreground-muted hover:border-status-offline/40 hover:text-status-offline disabled:opacity-40"
+                title={t('chat.stopGenerating')}
+                className="px-btn inline-flex h-8 items-center gap-1 rounded-[3px] border border-border-subtle bg-elevated-bg px-2 text-[11px] font-medium text-foreground-muted hover:border-status-offline/40 hover:text-status-offline disabled:opacity-40"
               >
-                <span className="inline-block h-2.5 w-2.5 rounded-[1px] bg-current opacity-90" aria-hidden />
-                {t('chat.stopGenerating')}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSend('queue')}
-                disabled={!canSteer}
-                title={t('chat.queueHint') || 'Queue for after this run'}
-                className="px-btn inline-flex h-8 items-center rounded-[3px] border border-border-subtle bg-elevated-bg px-2.5 text-[11px] font-medium text-foreground-muted hover:border-brand-cyan/40 hover:text-brand-cyan disabled:opacity-40"
-              >
-                {t('chat.queue') || '排队'}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSend('interrupt')}
-                disabled={!canSteer}
-                title={t('chat.interruptHint') || 'Stop current run and start a new task with this message'}
-                className="px-btn inline-flex h-8 items-center rounded-[3px] border border-border-subtle bg-elevated-bg px-2.5 text-[11px] font-medium text-foreground-muted hover:border-warning-text/50 hover:text-warning-text disabled:opacity-40"
-              >
-                {t('chat.newTask') || '新任务'}
+                <IconStop className="h-3 w-3" />
+                <span className="hidden sm:inline">{t('chat.stopGenerating')}</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleSend('steer')}
                 disabled={!canSteer}
-                aria-label={t('chat.steer') || 'Steer'}
-                className="px-btn inline-flex h-8 items-center gap-1.5 rounded-[3px] bg-brand-purple px-3.5 text-xs font-semibold tracking-tight text-white hover:brightness-105 disabled:cursor-not-allowed disabled:bg-brand-purple/50"
+                aria-label={t('chat.steer')}
+                title={t('chat.steerPlaceholder')}
+                className="px-btn inline-flex h-8 items-center gap-1.5 rounded-[3px] bg-brand-purple px-3 text-xs font-semibold tracking-tight text-white hover:brightness-105 disabled:cursor-not-allowed disabled:bg-brand-purple/50"
               >
                 <IconSend className="h-3.5 w-3.5 opacity-90" />
-                {t('chat.steer') || '纠偏'}
+                <span className="hidden sm:inline">{t('chat.steer')}</span>
               </button>
+              <div className="relative">
+                <button
+                  ref={moreBtnRef}
+                  type="button"
+                  onClick={() => {
+                    setToolsOpen(false);
+                    setMoreOpen((v) => !v);
+                  }}
+                  aria-label={t('chat.moreActions')}
+                  title={t('chat.moreActions')}
+                  aria-expanded={moreOpen}
+                  className={COMPOSER_ICON_BTN}
+                >
+                  <IconMore className="h-3.5 w-3.5" />
+                </button>
+                <ComposerMenuPortal open={moreOpen} anchorRef={moreBtnRef} align="end">
+                  <div className="min-w-[12rem] overflow-hidden rounded-md border border-border-default bg-elevated-bg py-1 shadow-[var(--hard-shadow)]">
+                    <button
+                      type="button"
+                      onClick={() => handleSend('queue')}
+                      disabled={!canSteer}
+                      title={t('chat.queueHint')}
+                      className="flex w-full items-center px-3 py-1.5 text-left text-xs text-foreground-muted hover:bg-card-bg-hover disabled:opacity-40"
+                    >
+                      {t('chat.queue')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSend('interrupt')}
+                      disabled={!canSteer}
+                      title={t('chat.interruptHint')}
+                      className="flex w-full items-center px-3 py-1.5 text-left text-xs text-foreground-muted hover:bg-card-bg-hover disabled:opacity-40"
+                    >
+                      {t('chat.newTask')}
+                    </button>
+                  </div>
+                </ComposerMenuPortal>
+              </div>
             </div>
           ) : (
             <button
@@ -937,41 +1062,17 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               onClick={() => handleSend()}
               disabled={!canSend}
               aria-label={t('chat.sendBtn')}
-              className={`px-btn inline-flex h-8 flex-shrink-0 items-center gap-1.5 rounded-[3px] px-3.5 text-xs font-semibold tracking-tight text-white disabled:cursor-not-allowed disabled:opacity-100 ${
+              title={t('chat.sendBtn')}
+              className={`px-btn inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[3px] text-white disabled:cursor-not-allowed disabled:opacity-100 ${
                 canSend
                   ? 'bg-brand-purple hover:brightness-105'
                   : 'bg-brand-purple/80'
               }`}
             >
-              <span>{t('chat.sendBtn')}</span>
               <IconSend className="h-3.5 w-3.5 opacity-90" />
             </button>
           )}
         </div>
-      </div>
-
-      {/* 底栏：模型选择 + 快捷键 + 版本号（JetBrains Mono 数据 / Silkscreen 装饰） */}
-      <div
-        className="flex h-7 flex-shrink-0 items-center gap-2 px-1.5"
-        data-no-composer-focus
-      >
-        {showModelPicker ? (
-          <ModelPicker disabled={inputLocked} onChanged={onModelChanged} sessionId={sessionId} />
-        ) : (
-          <span className="text-[11px] text-foreground-dim">Tevarn</span>
-        )}
-        <span className="hidden items-center gap-1 text-[10px] text-foreground-dim sm:inline-flex">
-          <kbd className="rounded-[3px] border border-border-subtle bg-card-bg px-1 font-sans text-[9px] leading-4">Enter</kbd>
-          发送
-        </span>
-        <span className="hidden items-center gap-1 text-[10px] text-foreground-dim sm:inline-flex">
-          <kbd className="rounded-[3px] border border-border-subtle bg-card-bg px-1 font-sans text-[9px] leading-4">Shift+Enter</kbd>
-          换行
-        </span>
-        <span className="flex-1" />
-        <span className="px-font text-[9px] tracking-wide text-foreground-dim">
-          Tevarn v{APP_VERSION}
-        </span>
       </div>
 
       <input

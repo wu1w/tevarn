@@ -2053,22 +2053,21 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
 
         proc = None  # audit-fix: spawn 本身失败时 Timeout 分支不得引用未绑定变量
         try:
-            from backend.core.safe_subprocess import kill_process_tree
+            from backend.computer.text_decode import decode_process_bytes
+            from backend.core.safe_subprocess import create_process_exec
 
-            # stdin DEVNULL + process group so outer cancel can tree-kill
-            _spawn: dict = {
-                "stdout": asyncio.subprocess.PIPE,
-                "stderr": asyncio.subprocess.PIPE,
-                "stdin": asyncio.subprocess.DEVNULL,
-            }
-            if sys.platform != "win32":
-                _spawn["start_new_session"] = True
-            proc = await asyncio.create_subprocess_exec(py, script_path, **_spawn)
+            # Windows SelectorEventLoop: asyncio.create_subprocess_exec raises
+            # bare NotImplementedError → empty ``[Error] `` and a dead python tool.
+            try:
+                timeout_s = float(timeout or 30)
+            except (TypeError, ValueError):
+                timeout_s = 30.0
+            proc = await create_process_exec(py, script_path)
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+                proc.communicate(), timeout=timeout_s
             )
-            out = stdout.decode("utf-8", errors="replace").strip()
-            err = stderr.decode("utf-8", errors="replace").strip()
+            out = decode_process_bytes(stdout or b"").strip()
+            err = decode_process_bytes(stderr or b"").strip()
             if err:
                 return f"[Exit {proc.returncode}]\nstdout:\n{out}\n\nstderr:\n{err}"
             return out or "[No output]"
@@ -2095,7 +2094,8 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                     pass
             raise
         except Exception as e:
-            return f"[Error] {e}"
+            msg = str(e).strip() or type(e).__name__
+            return f"[Error] {type(e).__name__}: {msg}"
     finally:
         if script_path:
             try:
