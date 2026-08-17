@@ -90,3 +90,49 @@ def test_steward_prompt_has_grant_policy():
     assert "提权是你的职责" in p
     assert "grant_caps" in p
     assert "禁止" in p and "主人" in p
+
+
+@pytest.mark.asyncio
+async def test_try_workforce_missing_cap_auto_grant_eligible():
+    from unittest.mock import AsyncMock, patch
+
+    from backend.agent.steward_auto_grant import try_workforce_missing_cap_auto_grant
+
+    with patch(
+        "backend.agent.steward_auto_grant.apply_ceo_auto_grant",
+        new=AsyncMock(
+            return_value={
+                "ok": True,
+                "merged": ["file_rw", "git"],
+                "message": "ceo:auto_grant +git",
+            }
+        ),
+    ):
+        ok, merged, note = await try_workforce_missing_cap_auto_grant(
+            tool_name="git",
+            identity_id="id-git",
+            identity_name="工程师",
+            current_caps=["file_rw"],
+        )
+    assert ok is True
+    assert "git" in merged
+    assert "auto_grant" in note
+    pending = list_pending(identity_id="id-git")
+    assert len(pending) == 1
+    assert pending[0]["needed_cap"] == "git"
+
+
+@pytest.mark.asyncio
+async def test_try_workforce_never_auto_still_records_pending():
+    from backend.agent.steward_auto_grant import try_workforce_missing_cap_auto_grant
+
+    ok, merged, note = await try_workforce_missing_cap_auto_grant(
+        tool_name="sudo",
+        identity_id="id-sudo",
+        identity_name="运维",
+        current_caps=[],
+    )
+    assert ok is False
+    assert merged == []
+    assert list_pending(identity_id="id-sudo")
+    assert "grant_caps" in note

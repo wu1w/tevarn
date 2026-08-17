@@ -67,6 +67,10 @@ async def _retract_pretool_user_stream(
     try:
         ws = getattr(loop, "ws_manager", None)
         if ws is None:
+            try:
+                loop._streamed_visible = shown or ""
+            except Exception:
+                pass
             return
         await ws.broadcast(
             session_id,
@@ -84,6 +88,10 @@ async def _retract_pretool_user_stream(
         )
     except Exception as _cr_e:
         logger.debug("pretool content_reset skip: %s", _cr_e)
+    try:
+        loop._streamed_visible = shown or ""
+    except Exception:
+        pass
 
 
 async def run_llm_round(
@@ -119,10 +127,7 @@ async def run_llm_round(
     except LlmAdmissionRejected as e:
         logger.warning("LLM admission rejected: %s", e)
         result.action = "break"
-        result.final_content = (
-            f"[Scheduler] 未能获得模型槽位：{e.reason}。"
-            "请稍后重试，或在内核「调度」面板查看排队与配额。"
-        )
+        result.final_content = "当前比较忙，请稍后再试。"
         return result
     except Exception as e:
         # 调度器故障不阻断主路径（可观测日志）
@@ -250,16 +255,23 @@ async def _run_llm_round_body(
                     break
                 except Exception as _chunk_e:
                     logger.warning("LLM stream chunk error: %s", _chunk_e)
-                    # Do NOT treat as empty reply — surface provider/network error
                     result.action = "break"
+                    from backend.agent.user_channel import user_visible_content
+
+                    partial = user_visible_content(accumulated_content)
                     result.final_content = (
-                        f"⚠️ 模型流式输出异常：{_chunk_e}\n"
-                        "这通常是网络、API Key 或上游服务问题，请检查后重试。"
+                        (partial + "\n\n出错了，以上是不完整草稿。请再试一次。")
+                        if partial
+                        else "出错了，请再试一次。"
                     )
                     try:
                         await loop._push_status(
-                            session_id, "error", f"LLM stream: {_chunk_e}"
+                            session_id, "error", "出错了，请再试一次。"
                         )
+                    except Exception:
+                        pass
+                    try:
+                        loop.last_exit_reason = "llm_stream_error"
                     except Exception:
                         pass
                     return result
@@ -273,11 +285,17 @@ async def _run_llm_round_body(
                     accumulated_reasoning += rdelta
 
                 # 推送流式正文（tool 已出现则收回抢答，不再继续推）
-                if chunk.delta:
-                    accumulated_content += chunk.delta
+                # 错误 chunk 的 delta 常是 [LLM Error] + 异常，不得进用户气泡
+                _delta = chunk.delta or ""
+                _err_chunk = (
+                    chunk.finish_reason == "error"
+                    or _delta.startswith("[LLM Error")
+                )
+                if _delta and not _err_chunk:
+                    accumulated_content += _delta
                     if not suppress_content_stream and not _pretool_retracted:
                         await loop._push_stream(
-                            session_id, message_id, chunk.delta
+                            session_id, message_id, _delta
                         )
 
                 # 收集 tool call：收回已流出的抢答正文
@@ -309,16 +327,13 @@ async def _run_llm_round_body(
                         err_delta = (chunk.delta or "").strip()
                         body = (accumulated_content or "").strip()
                         if err_delta.startswith("[LLM Error") or not body:
-                            accumulated_content = err_delta or (
-                                "[LLM Error] 模型返回失败且无正文。"
-                                "请检查网络/API Key/模型名后重试。"
-                            )
+                            accumulated_content = body
                             result.action = "break"
                             from backend.agent.user_channel import user_visible_content
 
                             result.final_content = user_visible_content(
                                 accumulated_content
-                            )
+                            ) or "出错了，请再试一次。"
                             result.accumulated_content = accumulated_content
                             result.accumulated_reasoning = accumulated_reasoning
                             result.tool_calls = []
@@ -333,7 +348,7 @@ async def _run_llm_round_body(
                             accumulated_content = body[: -len(err_delta)].rstrip()
                         accumulated_content = (
                             (accumulated_content or "").rstrip()
-                            + "\n\n[系统] 流式中断，以上为不完整草稿，请重试或点重新生成。"
+                            + "\n\n（生成中断，以上是不完整草稿。）"
                         )
                     break
         finally:
@@ -356,10 +371,12 @@ async def _run_llm_round_body(
             result.action = "break"
             from backend.agent.user_channel import user_visible_content
 
+            try:
+                loop.last_exit_reason = "stopped_by_user"
+            except Exception:
+                pass
             result.final_content = (
-                user_visible_content(accumulated_content)
-                or final_content
-                or "[Stopped] Generation was cancelled"
+                user_visible_content(accumulated_content) or final_content or ""
             )
             result.accumulated_content = accumulated_content
             result.accumulated_reasoning = accumulated_reasoning
@@ -416,7 +433,7 @@ async def _run_llm_round_body(
             await loop._push_status(
                 session_id,
                 "thinking",
-                f"LLM {_kind.value}，{_retried}/{_attempts} 次重试…",
+                "网络不稳定，正在重试…",
             )
             await _aio.sleep(delay)
             # P1：重试用新 message_id，避免前端把全量重推拼到旧气泡（幽灵半截）
@@ -427,20 +444,27 @@ async def _run_llm_round_body(
             # 通知前端清 streaming 缓冲（status 即可）
             try:
                 await loop._push_status(
-                    session_id, "thinking", "重试中 · 新一轮输出…"
+                    session_id, "thinking", "思考中…"
                 )
             except Exception:
                 pass
             result.action = "continue"
             return result
         loop._llm_fail_streak = 0
-        await loop._push_status(session_id, "error", f"LLM 调用失败: {e}")
+        await loop._push_status(session_id, "error", "出错了，请再试一次。")
         result.action = "break"
-        # User-visible on phone + PC; must end turn so mobile stream does not hang.
+        from backend.agent.user_channel import user_visible_content
+
+        partial = user_visible_content(accumulated_content)
         result.final_content = (
-            f"⚠️ 模型不可用：{e}\n"
-            "请在 PC 工作台检查 API Key / 模型 / 网络后重试。"
+            (partial + "\n\n出错了，以上是不完整草稿。请再试一次。")
+            if partial
+            else "出错了，请再试一次。"
         )
+        try:
+            loop.last_exit_reason = "llm_error"
+        except Exception:
+            pass
         return result
 
     # 引擎层回写：有 provider 真实 usage 就用真值，否则粗估（驱动后续是否再压缩）
@@ -648,7 +672,7 @@ async def _run_llm_round_body(
                             await loop._push_status(
                                 session_id,
                                 "thinking",
-                                f"Token 预算动态追加 +{_add}（第 {_n + 1}/{_max} 次），继续…",
+                                "思考中…",
                             )
                         except Exception:
                             pass
@@ -667,18 +691,14 @@ async def _run_llm_round_body(
 
                     # Token budget — NOT iteration budget (was mislabeled as 迭代预算耗尽)
                     loop.last_exit_reason = "kernel_token_budget_exhausted"
-                    result.final_content = (
-                        format_exit_user_message(
-                            "kernel_token_budget_exhausted",
-                            process_id=kernel_proc.id,
-                        )
-                        + f"\n（{e}）\n禁止用报告框架/预期结果冒充结论。"
+                    result.final_content = format_exit_user_message(
+                        "kernel_token_budget_exhausted"
                     )
                 except Exception:
+                    loop.last_exit_reason = "kernel_token_budget_exhausted"
                     result.final_content = (
-                        f"[Token 预算耗尽] 进程 token 额度用尽，运行已中断（{e}）。"
-                        "请 top_up 或提高默认 token_budget 后重试。"
-                        "禁止用报告框架/预期结果冒充结论。"
+                        "这一轮的用量额度已经用完，所以停在这里。"
+                        "\n缩小范围后再试，或在设置里提高上限。"
                     )
                 result.accumulated_content = ""
                 result.tool_calls = []
@@ -860,7 +880,7 @@ async def _run_llm_round_body(
             await loop._push_status(
                 session_id,
                 "thinking",
-                "模型返回空工具名，已拒绝并重试…",
+                "思考中…",
             )
             result.messages.append(
                 {

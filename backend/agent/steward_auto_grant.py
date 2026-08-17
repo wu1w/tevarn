@@ -82,6 +82,23 @@ def high_risk_auto_enabled() -> bool:
 
 def cap_eligible_for_auto(cap: str) -> bool:
     c = (cap or "").strip().lower()
+    high = high_risk_auto_enabled()
+    try:
+        from backend.kernel_rust.client import is_rust_host_available
+
+        if is_rust_host_available():
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+            if hasattr(k, "_call"):
+                r = k._call(
+                    "approval_cap_eligible",
+                    {"cap": c, "high_risk_auto": high},
+                )
+                if isinstance(r, dict) and "eligible" in r:
+                    return bool(r["eligible"])
+    except Exception:
+        pass
     if not c or c in _NEVER_AUTO:
         return False
     if any(n in c for n in _NEVER_AUTO):
@@ -89,9 +106,9 @@ def cap_eligible_for_auto(cap: str) -> bool:
     if c in _LOW_RISK_CAPS or any(c.startswith(x) for x in ("read", "search", "list")):
         return True
     if c in _JOB_HIGH_CAPS:
-        return high_risk_auto_enabled()
+        return high
     # 未知槽：仅低风险开关下不自动；高风险开时允许常见工程槽
-    if high_risk_auto_enabled() and c in {
+    if high and c in {
         "use_tool_pack",
         "memory",
         "http",
@@ -227,6 +244,71 @@ async def apply_ceo_auto_grant(
         logger.warning("apply_ceo_auto_grant failed: %s", e)
         out["message"] = str(e)
         return out
+
+
+async def try_workforce_missing_cap_auto_grant(
+    *,
+    tool_name: str,
+    identity_id: str | None,
+    identity_name: str | None = None,
+    inbox_item_id: str | None = None,
+    steward_session_id: str | None = None,
+    current_caps: list[str] | None = None,
+) -> tuple[bool, list[str], str]:
+    """Kernel-deny path for wf: record pending + auto-grant when eligible.
+
+    Rust court never reaches Python ``steward_decide_tool``, so this must run
+    in ``loop_tools`` *before* the hard identity deny. Returns
+    ``(granted, merged_caps, note)``.
+    """
+    from backend.agent.grant_store import crew_cap_for_tool
+    from backend.kernel.cap_requests import record_cap_request
+
+    want = (crew_cap_for_tool(tool_name) or tool_name or "").strip()
+    iid = (identity_id or "").strip()
+    iname = (identity_name or "").strip()
+    caps = list(current_caps or [])
+    rec_id = ""
+    if iid:
+        try:
+            rec = record_cap_request(
+                identity_id=iid,
+                identity_name=iname,
+                tool=tool_name,
+                needed_cap=want,
+                reason="outside_identity_caps",
+                inbox_item_id=inbox_item_id,
+                steward_session_id=steward_session_id,
+            )
+            rec_id = str(rec.get("id") or "")
+        except Exception as e:
+            logger.debug("record_cap_request skip: %s", e)
+
+    if not iid:
+        return False, caps, "（无 identity_id，无法自动扩权；请 CEO grant_caps）"
+
+    ag = await apply_ceo_auto_grant(
+        identity_id=iid,
+        identity_name=iname,
+        needed_cap=want,
+        tool=tool_name,
+        inbox_item_id=inbox_item_id,
+        reason="loop_tools outside_identity_caps",
+    )
+    if ag.get("ok"):
+        merged = list(ag.get("merged") or []) or list(
+            dict.fromkeys([*caps, want])
+        )
+        return True, merged, str(ag.get("message") or "auto_grant ok")
+
+    pending = f"申请 {rec_id}" if rec_id else "pending_grants"
+    msg = str(ag.get("message") or "auto_grant failed")
+    return (
+        False,
+        caps,
+        f"（已记 {pending}：{msg}。请 CEO 用 crew_steward action=grant_caps 处理，"
+        "不要让主人逐次点允许。）",
+    )
 
 
 def format_pending_grants_brief(limit: int = 12) -> str:

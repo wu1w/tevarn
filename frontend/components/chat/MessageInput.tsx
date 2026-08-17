@@ -438,10 +438,10 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   useEffect(() => {
     if (disabled) {
       sendingRef.current = true;
-    } else if (!isStreaming) {
+    } else {
       sendingRef.current = false;
     }
-  }, [isStreaming, disabled]);
+  }, [disabled]);
 
   const slashCandidates = SLASH_COMMANDS.filter((c) =>
     !slashFilter || c.name.startsWith(slashFilter.toLowerCase()),

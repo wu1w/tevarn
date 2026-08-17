@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { getPersistedAuthToken } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
 
 /** 判断链接是否指向 workspace 内 AI 生成的文件 */
@@ -34,13 +35,7 @@ function extractRelPath(href: string): string {
 }
 
 function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const auth = localStorage.getItem('tevarn-auth');
-    return auth ? (JSON.parse(auth)?.state?.token ?? null) : null;
-  } catch {
-    return null;
-  }
+  return getPersistedAuthToken();
 }
 
 function apiBase(): string {

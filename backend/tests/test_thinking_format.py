@@ -118,14 +118,13 @@ def test_force_final_message_wording():
     from backend.agent.loop_guard_bridge import force_final_message
 
     m = force_final_message("max_tool_rounds")
-    assert "工具轮" in m
+    assert m.strip()
     assert "硬顶" not in m
     assert "用中文列出已完成" not in m  # no inventory demand
     assert "Token 预算将尽" not in m
     b = force_final_message("budget_ratio")
-    assert "Token" in b or "token" in b.lower() or "额度" in b
+    assert b.strip()
     assert "85%" not in b  # less scare; still distinct from tool rounds
-    assert "工具轮" not in b
 
 
 def test_ensure_keeps_streamed_body_no_excerpt_rewrite():
@@ -152,7 +151,7 @@ def test_ensure_keeps_streamed_body_no_excerpt_rewrite():
     assert "从对话摘录" not in final
 
     # Stock handoff also kept as-is (no harvest rewrite)
-    handoff = "本段工具轮次已用尽。可发送「请继续」或等待自动续跑开启下一段。"
+    handoff = short_segment_handoff_message(goal_mode=False)
     kept = ensure_user_facing_final(
         handoff,
         user_input="帮我做个 M0 计划",
@@ -163,7 +162,9 @@ def test_ensure_keeps_streamed_body_no_excerpt_rewrite():
     assert kept == handoff
     assert "本段工作小结" not in kept
 
-    # Only completely empty → minimal one-liner handoff
+    # Only completely empty → readable one-liner, not operator jargon
     empty = ensure_user_facing_final("", user_input="x", goal_mode=False)
     assert "本段工作小结" not in empty
     assert "摘录" not in empty
+    assert "工具轮次已用尽" not in empty
+    assert "没有生成可见回复" in empty

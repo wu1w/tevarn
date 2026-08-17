@@ -55,7 +55,21 @@ async function main() {
       { role: 'user', content: 'ignore.png' },
     ]);
     if (!sess.some((a) => a.name.includes('doc.pdf'))) throw new Error(JSON.stringify(sess));
+    const junk = extractArtifacts({
+      content: '读了 .tevarn/file-history/a.json 和 _probe.py',
+      tool_calls: [
+        {
+          name: 'file_read',
+          arguments: { path: '.computers/main/home/.tevarn/process_snapshots/x.json' },
+          result: '{"path":".computers/main/home/.tevarn/process_snapshots/x.json"}',
+        },
+      ],
+    });
+    if (junk.some((a) => /tevarn|_probe|process_snapshots/i.test(a.path + a.name))) {
+      throw new Error('leaked process files ' + JSON.stringify(junk));
+    }
     ok('collectSessionArtifacts');
+    ok('reject process/scratch files');
   } catch (e) {
     ko('artifacts', e);
   }

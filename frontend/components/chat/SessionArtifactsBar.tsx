@@ -11,7 +11,7 @@ interface SessionArtifactsBarProps {
 }
 
 /**
- * 会话级「全部文件」折叠条：从助手消息聚合产物，一点预览。
+ * 会话级「本轮文件」：只聚合助手消息里的可投递产出，一点预览。
  */
 export function SessionArtifactsBar({ messages, onPreview }: SessionArtifactsBarProps) {
   const t = useT();

@@ -199,6 +199,13 @@ class LoopToolsMixin:
         # Durable Run：注入 recorder，permission 交互确认可切 WAITING 状态
         arguments = dict(arguments or {})
         arguments.setdefault("_run_recorder", getattr(self, "_run_recorder", None))
+        if getattr(self, "user_id", None) is not None:
+            arguments.setdefault("_user_id", str(self.user_id))
+        _sid_loop = getattr(self, "_session_id", None)
+        if _sid_loop:
+            arguments.setdefault("_session_id", str(_sid_loop))
+        if getattr(self, "ws_manager", None) is not None:
+            arguments.setdefault("_ws_manager", self.ws_manager)
         # Agent Computer：agent 身份（主 Agent=main；子代理 loop 实例可自带 key/label）
         arguments.setdefault("_agent_key", getattr(self, "_agent_key", "main"))
         arguments.setdefault("_agent_label", getattr(self, "_agent_label", ""))
@@ -428,6 +435,59 @@ class LoopToolsMixin:
                             self._identity_capabilities = caps  # type: ignore[misc]
                     except Exception:
                         pass
+                    if not tool_matches_crew_caps(name, caps):
+                        # Identity 缺槽：先记 pending 并走 CEO auto_grant（Rust court 到不了 Python steward）。
+                        from backend.agent.steward_auto_grant import (
+                            try_workforce_missing_cap_auto_grant,
+                        )
+
+                        granted, caps, grant_note = (
+                            await try_workforce_missing_cap_auto_grant(
+                                tool_name=name,
+                                identity_id=str(
+                                    getattr(self, "_identity_id", "")
+                                    or arguments.get("_identity_id")
+                                    or ""
+                                )
+                                or None,
+                                identity_name=str(
+                                    getattr(self, "_identity_name", "")
+                                    or arguments.get("_identity_name")
+                                    or ""
+                                )
+                                or None,
+                                inbox_item_id=str(
+                                    getattr(self, "_inbox_item_id", "")
+                                    or arguments.get("_inbox_item_id")
+                                    or ""
+                                )
+                                or None,
+                                steward_session_id=str(
+                                    getattr(self, "_steward_session_id", "")
+                                    or arguments.get("_steward_session_id")
+                                    or ""
+                                )
+                                or None,
+                                current_caps=caps,
+                            )
+                        )
+                        if granted:
+                            self._identity_capabilities = caps  # type: ignore[misc]
+                            arguments["_identity_capabilities"] = list(caps)
+                            logger.info(
+                                "workforce auto-grant then escalate tool=%s note=%s",
+                                name,
+                                grant_note,
+                            )
+                        else:
+                            if _child_leased:
+                                release_for_tool(
+                                    name, _lease_pid or kernel_proc.id
+                                )
+                            return (
+                                f"Error: 编制策略拒绝工具 «{name}»（不在员工能力档案内）。"
+                                f"{grant_note}"
+                            )
                     if tool_matches_crew_caps(name, caps):
                         # H2-B5: no local capabilities |=  — only escalate / re-issue via kernel
                         try:
@@ -499,7 +559,7 @@ class LoopToolsMixin:
                             release_for_tool(name, _lease_pid or kernel_proc.id)
                         return (
                             f"Error: 编制策略拒绝工具 «{name}»（不在员工能力档案内）。"
-                            "请主人让 CEO 在权限看板扩权，不要对每一次工具点「允许」。"
+                            "请 CEO 用 crew_steward action=grant_caps 扩权，不要对每一次工具点「允许」。"
                         )
                 except Exception as se:
                     logger.debug("workforce steward escalate path: %s", se)
@@ -563,25 +623,61 @@ class LoopToolsMixin:
                     logger.debug("CEO auto full-open skip: %s", _ceo_fo)
 
                 if gate_err and "Kernel 权限拒绝" in str(gate_err):
-                    esc_note = ""
-                    if bool(getattr(settings, "agent_kernel_auto_escalate", True)):
-                        try:
-                            req = await get_kernel().request_escalation(
-                                kernel_proc.id,
-                                [name],
-                                reason=f"工具调用被能力集拦截：{name}",
+                    from backend.agent.kernel_escalation_ui import (
+                        offer_kernel_capability_confirm,
+                    )
+
+                    _aid = str(
+                        getattr(self, "_identity_id", None)
+                        or arguments.get("_identity_id")
+                        or ""
+                    ).strip() or None
+                    _aname = str(
+                        getattr(self, "_identity_name", None)
+                        or arguments.get("_identity_name")
+                        or arguments.get("_contact_agent")
+                        or ""
+                    ).strip() or None
+                    confirm = await offer_kernel_capability_confirm(
+                        kernel=get_kernel(),
+                        process_id=kernel_proc.id,
+                        tool_name=name,
+                        deny_message=e,
+                        ws_manager=arguments.get("_ws_manager")
+                        or getattr(self, "ws_manager", None),
+                        session_id=arguments.get("_session_id")
+                        or getattr(self, "_session_id", None),
+                        user_id=arguments.get("_user_id")
+                        or getattr(self, "user_id", None),
+                        agent_id=_aid,
+                        agent_name=_aname,
+                        capabilities=[name],
+                        arguments=arguments,
+                    )
+                    if confirm.granted:
+                        arguments.pop("_tool_gate_passed", None)
+                        arguments.pop("_tool_gate_internal", None)
+                        arguments, gate_err2 = await enforce_tool_gate(
+                            name,
+                            arguments,
+                            process_id=kernel_proc.id,
+                        )
+                        if not gate_err2:
+                            logger.info(
+                                "in-chat escalate+approve re-gate ok tool=%s proc=%s",
+                                name,
+                                kernel_proc.id[:8],
                             )
-                            esc_note = (
-                                f"（已自动发起权限申请 {req.id}，"
-                                "用户在权限控制台批准后即可重试；请勿重复调用本工具）"
-                            )
-                        except ValueError:
-                            pass
-                        except Exception:
-                            pass
-                    if _child_leased:
-                        release_for_tool(name, _lease_pid or kernel_proc.id)
-                    return f"Error: Kernel 权限拒绝——{e}{esc_note}"
+                            gate_err = None
+                            e = None  # type: ignore[assignment]
+                        else:
+                            if _child_leased:
+                                release_for_tool(name, _lease_pid or kernel_proc.id)
+                            return gate_err2
+                    else:
+                        if _child_leased:
+                            release_for_tool(name, _lease_pid or kernel_proc.id)
+                        return f"Error: Kernel 权限拒绝——{e}{confirm.note}"
                 if gate_err:
                     if _child_leased:
                         release_for_tool(name, _lease_pid or kernel_proc.id)

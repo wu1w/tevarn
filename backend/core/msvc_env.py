@@ -175,7 +175,7 @@ def load_msvc_env() -> Mapping[str, str]:
     import tempfile
 
     try:
-        fd, bat_path = tempfile.mkstemp(prefix="takton_vcvars_", suffix=".bat")
+        fd, bat_path = tempfile.mkstemp(prefix="tevarn_vcvars_", suffix=".bat")
         os.close(fd)
         # ASCII bat: call vcvars (banner to nul) then dump env
         body = (

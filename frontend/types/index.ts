@@ -488,6 +488,7 @@ export type WSMessageType =
   | 'run_event'
   | 'screenshot'
   | 'user_message_ack'
+  | 'user_input_ignored'
   | 'confirm_expired'
   | 'slash_result';
 
@@ -522,6 +523,8 @@ export interface StatusUpdateMessage extends WSMessage {
   /** 本轮实际模型（loop 选好 LLM 后推送） */
   model?: string | null;
   provider?: string | null;
+  /** 去重/重连：true 时 idle 不得当作 run 结束 */
+  agent_running?: boolean;
 }
 
 /** 与 confirm_manager 广播 / ConfirmRequest schema 对齐 */

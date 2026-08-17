@@ -29,7 +29,6 @@ import type { ToolCallData } from '@/components/chat/ToolCallPanel';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { WorkspaceDock } from '@/components/workspace/WorkspaceDock';
 import { OpenProjectModal } from '@/components/workspace/OpenProjectModal';
-import { DangerConfirmDialog } from '@/components/chat/DangerConfirmDialog';
 import { ContactSessionPicker } from '@/components/chat/ContactSessionPicker';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
@@ -49,6 +48,84 @@ export default function ChatPage() {
       <ChatPageInner />
     </Suspense>
   );
+}
+
+function mapStreamStatusDetail(
+  detail: string | null | undefined,
+  t: (key: string) => string,
+): string | null {
+  const raw = (detail || '').trim();
+  if (!raw || raw === 'Ready') return null;
+  const queued = raw.match(/^已排队/) || raw.match(/^Queued \(/i);
+  if (queued) return raw.startsWith('Queued') ? t('chat.queued') : raw;
+  const table: Record<string, string> = {
+    '已停止': t('chat.stopped'),
+    'Generation stopped by user': t('chat.stopped'),
+    'Generation stopped': t('chat.stopped'),
+    '正在恢复…': t('chat.resuming'),
+    'Resuming…': t('chat.resuming'),
+    '开始处理排队消息…': t('chat.startingQueued'),
+    'Starting queued message…': t('chat.startingQueued'),
+    '正在结束上一轮…': t('chat.stoppingPrevious'),
+    'Stopping previous run to start new input...': t('chat.stoppingPrevious'),
+    '思考中…': t('chat.thinking'),
+    '思考中': t('chat.thinking'),
+    '继续推进…': t('chat.thinking'),
+    '正在给出答复…': t('chat.thinking'),
+    '正在收束并给出答复…': t('chat.thinking'),
+    '已收到补充说明…': t('chat.thinking'),
+    '正在整理上下文…': t('chat.thinking'),
+    '网络不稳定，正在重试…': t('chat.thinking'),
+  };
+  if (table[raw]) return table[raw];
+  if (
+    /^(场景 |model=|上下文已压缩|Applying user steer|Token 预算|自动续跑|后台任务|Goal |模型空回复|空回复|LLM |补充取证|模型返回空工具|进程已挂起|进程已恢复|layers=)/i.test(
+      raw,
+    ) ||
+    /top_up|force_final|kernel|dropped=/i.test(raw)
+  ) {
+    return t('chat.thinking');
+  }
+  return raw;
+}
+
+function keepPartialAssistantOnIdle(
+  sid: string,
+  leftover: string,
+  loadMessages: (id: string) => Promise<unknown>,
+  addMessage: (m: Message) => void,
+) {
+  const finish = () => {
+    if (!leftover.trim()) return;
+    const msgs = useSessionStore.getState().messages || [];
+    const lastA = [...msgs].reverse().find(
+      (m) =>
+        m.role === 'assistant' &&
+        !String(m.id || '').startsWith('streaming') &&
+        !String(m.id || '').startsWith('optimistic:'),
+    );
+    const head = leftover.trim().slice(0, 80);
+    const have = lastA && String(lastA.content || '').includes(head);
+    if (!have) {
+      addMessage({
+        id: generateUUID(),
+        session_id: sid,
+        role: 'assistant',
+        content: leftover,
+        tool_calls: null,
+        token_count: null,
+        created_at: new Date().toISOString(),
+      });
+    }
+  };
+  if (sid) {
+    void loadMessages(sid).then(finish).catch((e) => {
+      console.error(e);
+      finish();
+    });
+  } else {
+    finish();
+  }
 }
 
 function ChatPageInner() {
@@ -262,7 +339,7 @@ function ChatPageInner() {
             setStreamingContent(cached.content || '');
             streamingContentRef.current = cached.content || '';
             setLiveToolCalls(cached.tools || []);
-            setStreamStatusDetail(cached.statusDetail || 'Resuming…');
+            setStreamStatusDetail(cached.statusDetail || t('chat.resuming'));
             lastStreamActivityRef.current = Date.now();
             const resumeSid = sid;
             // 假 Resuming：sync 到达后 6s、或最多等 12s 仍无活动则收束
@@ -632,13 +709,15 @@ function ChatPageInner() {
       if (msg.state === 'thinking' || msg.state === 'tool_executing' || msg.state === 'optimizing') {
         // 用户已点停止：忽略迟到的 running 态，避免假停被冲掉
         if (isStoppingSid(sid)) {
-          setStreamStatusDetail(msg.detail || t('chat.stopping') || 'Stopping…');
+          setStreamStatusDetail(
+            mapStreamStatusDetail(msg.detail, t) || t('chat.stopping'),
+          );
           return;
         }
         setIsStreaming(true);
         lastStreamActivityRef.current = Date.now();
         if (msg.detail) {
-          setStreamStatusDetail(msg.detail);
+          setStreamStatusDetail(mapStreamStatusDetail(msg.detail, t));
         }
         // 本轮实际模型（优先结构化字段）
         const modelFromMsg =
@@ -710,7 +789,13 @@ function ChatPageInner() {
           }
         }
       } else if (msg.state === 'idle') {
-              const wasStopping = isStoppingSid(sid);
+              if (msg.agent_running) {
+                // Duplicate-ack / stale idle while the agent is still running.
+                // Must not unlock the composer or freeze a ghost assistant bubble.
+                if (msg.detail) setStreamStatusDetail(msg.detail);
+                lastStreamActivityRef.current = Date.now();
+                return;
+              }
               setStoppingSid(sid, false);
               setStreamStuck(false);
               setIsStreaming(false);
@@ -733,23 +818,15 @@ function ChatPageInner() {
               // 下一帧清空 live 列表（历史消息已 load）
               window.setTimeout(() => setLiveToolCalls([]), 0);
               if (sid) streamSessionApi().markIdle(sid);
-              // 停止路径：不把 partial 当最终消息二次插入（loadMessages 会拉权威历史）
+              // Stop keeps a local partial if history has not landed yet (ChatGPT/Cursor).
               if (leftover || sid) {
                 setTimeout(() => {
-                  if (leftover && !wasStopping) {
-                    addMessage({
-                      id: generateUUID(),
-                      session_id: sid,
-                      role: 'assistant',
-                      content: leftover,
-                      tool_calls: null,
-                      token_count: null,
-                      created_at: new Date().toISOString(),
-                    });
-                  }
-                  if (sid) {
-                    loadMessages(sid).catch(console.error);
-                  }
+                  keepPartialAssistantOnIdle(
+                    sid,
+                    leftover || '',
+                    loadMessages,
+                    addMessage,
+                  );
                 }, 0);
               }
             }
@@ -942,7 +1019,7 @@ function ChatPageInner() {
                     result: t.result ?? undefined,
                   }))
                 : streamSessionApi().get(sid).tools,
-              statusDetail: payload.stream_status || 'Resuming…',
+              statusDetail: payload.stream_status || t('chat.resuming'),
               streamMessageId: payload.stream_message_id || null,
             });
           }
@@ -1003,6 +1080,27 @@ const handleUserMessageAck = useCallback(
         [currentSession?.id, reconcileMessage]
       );
 
+  const handleUserInputIgnored = useCallback(
+    (payload: { reason?: string; detail?: string; agent_running?: boolean }) => {
+      const sid = currentSession?.id || '';
+      const detail =
+        payload.detail || t('chat.duplicateIgnored') || '忽略重复发送（短时相同内容）';
+      setStreamStatusDetail(detail);
+      lastStreamActivityRef.current = Date.now();
+      if (sid) {
+        const st = useSessionStore.getState();
+        const opts = (st.messages || []).filter(
+          (m) =>
+            String(m.id || '').startsWith('optimistic:') &&
+            m.role === 'user' &&
+            (!m.session_id || m.session_id === sid),
+        );
+        if (opts.length) st.removeMessage(opts[opts.length - 1].id);
+      }
+    },
+    [currentSession?.id, t],
+  );
+
   // AppShell GlobalChatWs 常驻连接；本页注册 handlers，并在回页后主动 sync 补漏 delta
   React.useEffect(() => {
     const getLast = () => {
@@ -1030,6 +1128,7 @@ const handleUserMessageAck = useCallback(
       onStatusUpdate: handleStatusUpdate,
       onSyncResponse: handleSyncResponse,
       onUserMessageAck: handleUserMessageAck,
+      onUserInputIgnored: handleUserInputIgnored,
       onSlashResult: (payload) => {
         // /new → 切换到新会话，并记为该员工「最后选择」
         if (payload.new_session_id) {
@@ -1110,6 +1209,7 @@ const handleUserMessageAck = useCallback(
     handleStatusUpdate,
     handleSyncResponse,
     handleUserMessageAck,
+    handleUserInputIgnored,
     handleToolEvent,
     handleRunEvent,
     handleGoalUpdate,
@@ -1536,7 +1636,8 @@ const handleUserMessageAck = useCallback(
       setStreamStatusDetail(t('chat.stopping') || 'Stopping…');
       const ok = sendStop();
       if (!ok) {
-        // 未连上：本地直接收束
+        // 未连上：本地直接收束，保留已流出正文
+        const leftover = streamingContentRef.current || '';
         setStoppingSid(sid, false);
         if (useSessionStore.getState().currentSession?.id === sid) {
           setIsStreaming(false);
@@ -1546,12 +1647,13 @@ const handleUserMessageAck = useCallback(
           setStreamingContent('');
         }
         streamSessionApi().markIdle(sid);
-        loadMessages(sid).catch(console.error);
+        keepPartialAssistantOnIdle(sid, leftover, loadMessages, addMessage);
         return;
       }
       // 兜底：8s 仍无 idle 则强制收束——仅影响发起 stop 的 sid，且仅当仍在看该会话时改 UI
       window.setTimeout(() => {
         if (!isStoppingSid(sid)) return;
+        const leftover = streamingContentRef.current || '';
         setStoppingSid(sid, false);
         streamSessionApi().markIdle(sid);
         if (useSessionStore.getState().currentSession?.id === sid) {
@@ -1560,10 +1662,10 @@ const handleUserMessageAck = useCallback(
           setLiveToolCalls([]);
           streamingContentRef.current = '';
           setStreamingContent('');
-          loadMessages(sid).catch(console.error);
         }
+        keepPartialAssistantOnIdle(sid, leftover, loadMessages, addMessage);
       }, 8000);
-    }, [sendStop, currentSession, loadMessages, t, setStoppingSid, isStoppingSid]);
+    }, [sendStop, currentSession, loadMessages, addMessage, t, setStoppingSid, isStoppingSid]);
 
   const handleTagClick = useCallback(
     (tagKey: string) => {
@@ -1597,7 +1699,7 @@ const handleUserMessageAck = useCallback(
         setStreamingContent(cached.content || '');
         streamingContentRef.current = cached.content || '';
         setLiveToolCalls(cached.tools || []);
-        setStreamStatusDetail(cached.statusDetail || 'Resuming…');
+        setStreamStatusDetail(cached.statusDetail || t('chat.resuming'));
       } else {
         // 未知是否在跑：先不清 streaming，等 switch 后 sync_response 校正
         setStreamingContent('');
@@ -1687,23 +1789,13 @@ const handleUserMessageAck = useCallback(
             status: tc.status,
           }))
         : null;
-    let liveContent = streamingContent;
-    if (!liveContent && streamStatusDetail && liveToolCalls.length === 0) {
-      liveContent = '';
-    }
     return [
       ...base,
       {
         id: 'streaming',
         session_id: currentSessionId,
         role: 'assistant' as const,
-        content:
-          liveContent ||
-          (liveToolCalls.length
-            ? ''
-            : streamStatusDetail
-              ? `_${streamStatusDetail}_`
-              : ''),
+        content: streamingContent || '',
         tool_calls: liveToolCallsForMsg as Message['tool_calls'],
         token_count: null,
         created_at: new Date().toISOString(),
@@ -1715,7 +1807,6 @@ const handleUserMessageAck = useCallback(
     isStreaming,
     streamingContent,
     liveToolCalls,
-    streamStatusDetail,
   ]);
 
   return (
@@ -2137,7 +2228,6 @@ const handleUserMessageAck = useCallback(
                                       </div>
 
                                       <OpenProjectModal />
-                                      <DangerConfirmDialog />
                                     </div>
                                   );
                                 }

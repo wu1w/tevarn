@@ -202,8 +202,14 @@ def test_exit_reasons_catalog() -> None:
     assert d["code"] == "doom_loop"
     assert "resume" in d["resume_entry"]
     msg = format_exit_user_message("kernel_iteration_exhausted", process_id="abc")
-    assert "内核" in msg or "预算" in msg
-    assert "abc" in msg
+    assert "步数" in msg or "请继续" in msg
+    assert "abc" not in msg
+    assert "/kernel/" not in msg
+    assert "process_id=" not in msg
+    op = format_exit_user_message(
+        "kernel_iteration_exhausted", process_id="abc", for_operator=True
+    )
+    assert "abc" in op
 
 
 def test_log_cache_usage_reports_kernel(k) -> None:

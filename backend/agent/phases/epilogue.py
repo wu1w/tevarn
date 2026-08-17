@@ -274,7 +274,12 @@ async def run_epilogue(
 
     # 8. 保存最终回复 + 同步 CtxItem + 状态 + 通知（同一事务）
     try:
-        await loop._persist_final_response(session_id, final_content)
+        await loop._persist_final_response(
+            session_id,
+            final_content,
+            skip_if_empty=str(getattr(loop, "last_exit_reason", "") or "")
+            == "stopped_by_user",
+        )
     except Exception as e:
         logger.error(f"Failed to persist final response: {e}")
         # 兜底：至少把状态恢复为 idle

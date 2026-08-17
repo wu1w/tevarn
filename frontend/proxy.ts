@@ -19,7 +19,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!request.cookies.get('tevarn-auth')) {
+  if (!request.cookies.get('tevarn-auth') && !request.cookies.get('takton-auth')) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);

@@ -5,6 +5,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User, TokenResponse } from '@/types';
+import { adoptLegacyPersist } from '@/lib/adoptLegacyPersist';
+
+adoptLegacyPersist('tevarn-auth');
 
 // Cookie 辅助函数（用于 middleware 检测登录状态）
 function setAuthCookie(token: string, expiresInSeconds: number) {
@@ -19,6 +22,7 @@ function removeAuthCookie() {
   if (typeof document !== 'undefined') {
     const secure = window.location.protocol === 'https:' ? '; Secure' : '';
     document.cookie = `tevarn-auth=; path=/; max-age=0; SameSite=Strict${secure}`;
+    document.cookie = `takton-auth=; path=/; max-age=0; SameSite=Strict${secure}`;
   }
 }
 
@@ -73,6 +77,8 @@ export const useAuthStore = create<AuthState>()(
         if (typeof window !== 'undefined') {
           try {
             window.localStorage.removeItem('tevarn-session');
+            window.localStorage.removeItem('takton-session');
+            window.localStorage.removeItem('takton-auth');
           } catch {
             /* ignore */
           }

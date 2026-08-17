@@ -4,7 +4,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatArtifact } from '@/lib/artifacts';
-import { readFile } from '@/lib/api';
+import { isInternalRuntimePath, isScratchOrProcessFile } from '@/lib/artifacts';
+import { getPersistedAuthToken, readFile } from '@/lib/api';
 import {
   loadDocxHtml,
   loadPptxSlides,
@@ -18,22 +19,11 @@ import { useToastStore } from '@/stores/toastStore';
 import { ColResizer } from '@/components/ui/ColResizer';
 
 function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const auth = localStorage.getItem('tevarn-auth');
-    return auth ? (JSON.parse(auth)?.state?.token ?? null) : null;
-  } catch {
-    return null;
-  }
+  return getPersistedAuthToken();
 }
 
 function apiBase(): string {
-  if (typeof window !== 'undefined' && (window as unknown as { electronAPI?: unknown }).electronAPI) {
-    return '/api';
-  }
-  if (typeof window !== 'undefined' && (window as unknown as { electron?: unknown }).electron) {
-    return 'http://127.0.0.1:8000/api';
-  }
+  // Electron 与浏览器同源 /api（主进程反代）；勿硬编码 :8000
   return '/api';
 }
 
@@ -159,6 +149,12 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
       if (!artifact) {
         setPreview({ type: 'empty' });
         setError(null);
+        return;
+      }
+      if (isInternalRuntimePath(artifact.path) || isScratchOrProcessFile(artifact.path)) {
+        setPreview({ type: 'empty' });
+        setError(t('chat.artifactDownloadFail'));
+        setLoading(false);
         return;
       }
       setLoading(true);
@@ -287,6 +283,10 @@ export function FilePreviewHost({ artifact, onClose }: FilePreviewHostProps) {
 
   const handleDownload = useCallback(async () => {
     if (!artifact) return;
+    if (isInternalRuntimePath(artifact.path) || isScratchOrProcessFile(artifact.path)) {
+      addToast(t('chat.artifactDownloadFail'), 'error');
+      return;
+    }
     try {
       const blob = await fetchBlob(artifact.path);
       const a = document.createElement('a');

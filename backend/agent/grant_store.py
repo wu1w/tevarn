@@ -196,6 +196,7 @@ TOOL_TO_CREW_CAP: dict[str, str] = {
     # MCP 管理与运行时（动态 mcp_* 走 tool_matches 前缀规则）
     "manage_mcp": "manage_mcp",
     "manage_skill": "manage_skill",
+    "generate_ppt": "file_rw",
 }
 
 
@@ -229,6 +230,9 @@ def sync_catalog_from_kernel(kernel: Any | None = None) -> bool:
         TOOL_TO_CREW_CAP.setdefault("clarify", "crew_steward")
         TOOL_TO_CREW_CAP.setdefault("manage_mcp", "manage_mcp")
         TOOL_TO_CREW_CAP.setdefault("manage_skill", "manage_skill")
+        TOOL_TO_CREW_CAP.setdefault("generate_ppt", "file_rw")
+        TOOL_TO_CREW_CAP.setdefault("current_time", "current_time")
+        TOOL_TO_CREW_CAP.setdefault("result_load", "file_read")
         logger.info("grant_store catalog synced from rust (%s entries)", len(TOOL_TO_CREW_CAP))
         return True
     except Exception as e:
@@ -270,11 +274,65 @@ def allow_signature(tool: str, arguments: dict[str, Any] | None = None) -> str:
     return tool
 
 
+def _rust_grant_rpc(method: str, params: dict[str, Any], kernel: Any | None = None) -> dict[str, Any] | None:
+    """Best-effort live court map. Old hosts without these RPCs are ignored."""
+    try:
+        k = kernel
+        if k is None:
+            from backend.kernel_rust.client import is_rust_host_available
+
+            if not is_rust_host_available():
+                return None
+            from backend.kernel import get_kernel
+
+            k = get_kernel()
+        if not hasattr(k, "_call"):
+            return None
+        r = k._call(method, params)
+        return r if isinstance(r, dict) else None
+    except Exception as e:
+        logger.debug("rust grant rpc %s skip: %s", method, e)
+        return None
+
+
+def rehydrate_session_grants_to_kernel(kernel: Any | None = None) -> int:
+    """Push persisted grants into the live Rust SessionGrantStore."""
+    _ensure_loaded()
+    n = 0
+    with _grants_lock:
+        items = [(sid, sorted(sigs)) for sid, sigs in _session_grants.items() if sigs]
+    for sid, sigs in items:
+        r = _rust_grant_rpc(
+            "session_grant_add",
+            {"session_id": sid, "sigs": sigs},
+            kernel=kernel,
+        )
+        if r is not None:
+            n += 1
+    if n:
+        logger.info("session grants rehydrated to rust sessions=%s", n)
+    return n
+
+
 def has_session_grant(session_id: str | None, tool: str, arguments: dict[str, Any] | None = None) -> bool:
     if not session_id:
         return False
     _ensure_loaded()
     sid = str(session_id)
+    sig = allow_signature(tool, arguments)
+    rust = _rust_grant_rpc(
+        "session_grant_has",
+        {"session_id": sid, "sig": sig},
+    )
+    if isinstance(rust, dict) and rust.get("has") is True:
+        return True
+    if rust is not None and tool != sig:
+        whole = _rust_grant_rpc(
+            "session_grant_has",
+            {"session_id": sid, "sig": tool},
+        )
+        if isinstance(whole, dict) and whole.get("has") is True:
+            return True
     with _grants_lock:
         # Lazy TTL check
         ttl = _grant_ttl_seconds()
@@ -289,7 +347,7 @@ def has_session_grant(session_id: str | None, tool: str, arguments: dict[str, An
         if not grants:
             return False
         # 细粒度签名（command:rm）或整工具名（本员工/本会话放行 command）
-        if allow_signature(tool, arguments) in grants:
+        if sig in grants:
             return True
         if tool in grants:
             return True
@@ -321,6 +379,10 @@ def add_session_grant(
             bucket.add(tool)
         _session_grant_ts[sid] = time.time()
         _persist()
+    sigs = [sig]
+    if whole_tool and tool != sig:
+        sigs.append(tool)
+    _rust_grant_rpc("session_grant_add", {"session_id": sid, "sigs": sigs})
     logger.info(
         "grant session allow session=%s sig=%s whole=%s",
         sid[:8],
@@ -447,17 +509,26 @@ def clear_session_grants(session_id: str | None) -> None:
         _session_grant_ts.pop(sid, None)
         if had:
             _persist()
+    _rust_grant_rpc("session_grant_clear", {"session_id": str(session_id)})
 
 
 def prune_expired_session_grants() -> int:
     """Drop grants past TTL. Returns number removed."""
     _ensure_loaded()
     with _grants_lock:
+        dead = [
+            sid
+            for sid, ts in list(_session_grant_ts.items())
+            if _grant_ttl_seconds() > 0
+            and (time.time() - float(ts or 0)) > _grant_ttl_seconds()
+        ]
         n = _prune_expired_locked()
         if n:
             _persist()
             logger.info("session grants TTL pruned count=%s", n)
-        return n
+    for sid in dead:
+        _rust_grant_rpc("session_grant_clear", {"session_id": sid})
+    return n
 
 
 def prune_orphan_session_grants(live_session_ids: set[str] | list[str] | None) -> int:
@@ -478,7 +549,9 @@ def prune_orphan_session_grants(live_session_ids: set[str] | list[str] | None) -
                 len(dead),
                 len(_session_grants),
             )
-        return len(dead)
+    for sid in dead:
+        _rust_grant_rpc("session_grant_clear", {"session_id": sid})
+    return len(dead)
 
 
 async def prune_session_grants_startup() -> dict[str, int]:
@@ -560,3 +633,5 @@ def reset_for_tests() -> None:
                 p.unlink()
         except OSError:
             pass
+    # Do not session_grant_clear the live host: pytest may share a desktop
+    # tevarn-kernel-host. Court tests clear their own session ids explicitly.

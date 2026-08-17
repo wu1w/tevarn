@@ -4,6 +4,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from '@/lib/api';
 import { t } from '@/stores/localeStore';
+import { adoptLegacyPersist } from '@/lib/adoptLegacyPersist';
+
+adoptLegacyPersist('tevarn-workspace');
 
 export type UiMode = 'simple' | 'pro';
 

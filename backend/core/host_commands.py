@@ -53,7 +53,7 @@ def common_tool_dirs() -> list[str]:
         # 常见 uv 用户安装
         home / ".local" / "bin",
         home / "AppData" / "Local" / "uv",
-        # Tevarn / Takton 便携 Python
+        # Tevarn 便携 Python（含旧目录软迁移）
         Path(r"C:\Users") / os.environ.get("USERNAME", "") / "AppData" / "Local" / "Programs" / "tevarn" / "resources" / "python" / "Scripts",
         home / "AppData" / "Local" / "Programs" / "tevarn" / "resources" / "python" / "Scripts",
         home / ".takton" / "python" / "Scripts",

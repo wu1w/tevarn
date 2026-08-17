@@ -48,3 +48,18 @@ def should_drop_duplicate_user(session_id: Any, content: str) -> bool:
         return True
     _LAST[key] = (h, now)
     return False
+
+
+def duplicate_ack_payload(*, agent_running: bool) -> dict:
+    """WS payload after dropping a duplicate user_input.
+
+    Never broadcast `state=idle` — the chat UI treats idle as run-complete
+    (unlocks composer, may freeze a ghost assistant bubble). Even when
+    `has_running_agent` is still false, the accepted send may be mid-spawn.
+    """
+    return {
+        "type": "user_input_ignored",
+        "reason": "duplicate",
+        "detail": "忽略重复发送（短时相同内容）",
+        "agent_running": bool(agent_running),
+    }

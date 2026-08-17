@@ -41,6 +41,7 @@ use crate::instance::InstanceRegistry;
 use crate::device_sync::DeviceSyncHub;
 use crate::domain_events::DomainEventBus;
 use crate::approval_rules::ApprovalPolicy;
+use crate::session_grants::{allow_signature, SessionGrantStore};
 use crate::eval_suite::EvalSuite;
 use crate::abi_compat::AbiCompatState;
 use crate::agent_manifest::{pack_checklist, validate_agent_manifest, validate_agent_manifest_str};
@@ -200,6 +201,7 @@ struct KernelInner {
     abi: AbiCompatState,
     /// Opaque identity registry hook marker (set by host/runtime glue)
     identity_registry_attached: bool,
+    session_grants: SessionGrantStore,
 }
 
 pub struct AgentKernel {
@@ -263,6 +265,7 @@ impl AgentKernel {
                 eval_suite: EvalSuite::default(),
                 abi: AbiCompatState::default(),
                 identity_registry_attached: false,
+                session_grants: SessionGrantStore::default(),
             }),
         }
     }
@@ -1881,7 +1884,7 @@ impl AgentKernel {
     ) -> CourtDecision {
         let g = self.inner.read();
         let proc = process_id.and_then(|pid| g.processes.get(pid));
-        let decision = decide_tool(
+        let mut decision = decide_tool(
             name,
             args,
             &g.court_policy,
@@ -1889,6 +1892,22 @@ impl AgentKernel {
             skill_tools,
             skill_deny,
         );
+        if decision.verdict == "ask" {
+            if let Some(sid) = args
+                .and_then(|a| a.get("_session_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let sig = allow_signature(name, args);
+                if g.session_grants.has(sid, &sig) || g.session_grants.has(sid, name) {
+                    decision.verdict = "allow".into();
+                    decision.matched_rule = "session_grant".into();
+                    decision.layer = "session_grant".into();
+                    decision.reason = "session grant allow".into();
+                }
+            }
+        }
         decision
     }
 
@@ -4438,6 +4457,31 @@ impl AgentKernel {
             "evolution_requires_review": true,
         })
     }
+
+    pub fn approval_cap_eligible(&self, cap: &str, high_risk_auto: bool) -> Value {
+        json!({
+            "eligible": crate::approval_rules::cap_eligible_for_auto(cap, high_risk_auto),
+            "cap": cap,
+            "high_risk_auto": high_risk_auto,
+        })
+    }
+
+    pub fn session_grant_add(&self, session_id: &str, sigs: Vec<String>) -> Value {
+        let mut g = self.inner.write();
+        g.session_grants.add(session_id, sigs);
+        json!({"ok": true, "sigs": g.session_grants.snapshot(session_id)})
+    }
+
+    pub fn session_grant_has(&self, session_id: &str, sig: &str) -> Value {
+        json!({
+            "has": self.inner.read().session_grants.has(session_id, sig),
+        })
+    }
+
+    pub fn session_grant_clear(&self, session_id: &str) -> Value {
+        self.inner.write().session_grants.clear(session_id);
+        json!({"ok": true})
+    }
 }
 
 fn decode_b64_loose(s: &str) -> Result<Vec<u8>, ()> {
@@ -4929,5 +4973,34 @@ mod tests {
             .hal_enforce_command(&p.id, "python", vec!["-V".into()])
             .unwrap();
         assert_eq!(cmd["mediated"], true);
+    }
+
+    #[test]
+    fn session_grant_upgrades_ask() {
+        let kernel = k();
+        let p = kernel
+            .create_process(
+                "main",
+                None,
+                None,
+                Some(vec!["file_write".into(), "file_rw".into()]),
+                None,
+                None,
+            )
+            .unwrap();
+        let args = json!({
+            "path": "a.txt",
+            "content": "x",
+            "_session_id": "sess-1",
+        });
+        let before = kernel.decide_tool("file_write", Some(&args), Some(&p.id), None, None);
+        assert_eq!(before.verdict, "ask");
+        kernel.session_grant_add("sess-1", vec!["file_write".into()]);
+        let after = kernel.decide_tool("file_write", Some(&args), Some(&p.id), None, None);
+        assert_eq!(after.verdict, "allow");
+        assert_eq!(after.matched_rule, "session_grant");
+        kernel.session_grant_clear("sess-1");
+        let cleared = kernel.decide_tool("file_write", Some(&args), Some(&p.id), None, None);
+        assert_eq!(cleared.verdict, "ask");
     }
 }

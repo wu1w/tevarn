@@ -3,7 +3,7 @@
 优先级（高 → 低）：
 1. 设置页手动代理：outbound_proxy_enabled + host + port（Windows 风格）
 2. 完整 URL 配置：settings.outbound_https_proxy / https_proxy
-3. 环境变量 TAKTON_/TEVARN_HTTPS_PROXY、HTTPS_PROXY / HTTP_PROXY / ALL_PROXY
+3. 环境变量 TEVARN_/TAKTON_HTTPS_PROXY、HTTPS_PROXY / HTTP_PROXY / ALL_PROXY
 4. 无代理（直连）
 
 用法：
@@ -28,10 +28,10 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 _ENV_KEYS = (
-    "TAKTON_HTTPS_PROXY",
-    "TAKTON_OUTBOUND_PROXY",
     "TEVARN_HTTPS_PROXY",
     "TEVARN_OUTBOUND_PROXY",
+    "TAKTON_HTTPS_PROXY",
+    "TAKTON_OUTBOUND_PROXY",
     "HTTPS_PROXY",
     "https_proxy",
     "ALL_PROXY",

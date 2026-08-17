@@ -3,7 +3,7 @@
 拆分 _run_locked 之前的 characterization 基线：
 - 简单问答：LLM 流式 delta 拼成最终回复并持久化
 - 工具流：tool_call → 工具执行 → tool 消息回灌 → 第二轮得到最终回复
-- 停止信号：流中 _should_stop → 以 [Stopped] 收尾且不炸
+- 停止信号：流中 _should_stop → 保留半截正文且不炸
 
 这些测试必须先于拆分通过，拆分后也必须原样通过（行为不变）。
 """
@@ -162,7 +162,7 @@ def test_freeze_tool_call_flow():
 
 
 def test_freeze_stop_signal():
-    """流中停止：_should_stop 置位 → 以 Stopped 收尾"""
+    """流中停止：_should_stop 置位 → 保留已流出正文，不插入内部 Stopped 标记"""
     loop_holder: dict = {}
 
     class _StopLLM:
@@ -180,7 +180,9 @@ def test_freeze_stop_signal():
         patcher.stop()
         loop._should_stop = False
 
-    assert "Stopped" in out or "半截" in out  # 停止语义：半截内容或 Stopped 标记
+    assert "半截" in (out or "")
+    assert "[Stopped]" not in (out or "")
+    assert getattr(loop, "last_exit_reason", "") == "stopped_by_user"
 
 
 def test_freeze_llm_error_surfaces():
@@ -197,6 +199,7 @@ def test_freeze_llm_error_surfaces():
     finally:
         patcher.stop()
 
-    # 冻结口径：错误必须显式出现在最终结果，不允许空串/模拟成功
+    # 冻结口径：必须有可见失败文案，不允许空串/假装成功；不把异常栈泄到聊天
     assert isinstance(out, str) and out.strip()
-    assert "exploded" in out or "Error" in out or "错误" in out or "失败" in out
+    assert "exploded" not in out
+    assert "出错" in out or "失败" in out or "再试" in out

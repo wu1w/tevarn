@@ -52,6 +52,13 @@ try {
   /* ignore pre-ready edge cases */
 }
 
+// One Electron shell. A second launch focuses the existing window instead of
+// spawning another FastAPI (which would fight over ports / JWT).
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 // ---- 路径 / 端口 ----
 // 后端端口：与 CLI/手册统一默认 8090；候选含历史 8000 以便发现孤儿 Host
 const DEFAULT_BACKEND_PORT = 8090;
@@ -164,6 +171,25 @@ let frontendServer: http.Server | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+
+function focusExistingWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+  mainWindow.focus();
+}
+
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    focusExistingWindow();
+  }
+});
 /** True while we intentionally stop/replace the backend (skip auto-restart). */
 let backendStopIntentional = false;
 /** Auto-restart bookkeeping for silent backend deaths. */
@@ -298,7 +324,7 @@ function httpGet(url: string, timeoutMs = 1500): Promise<{ status: number; body:
 async function isTevarnBackend(port: number): Promise<boolean> {
   try {
     const res = await httpGet(`http://127.0.0.1:${port}/api/health`, 1200);
-    // Accept legacy "takton-backend" health body during rebrand transition
+    // Accept pre-rebrand health body during upgrade (old detached processes)
     const b = (res.body || '').toLowerCase();
     return res.status === 200 && (b.includes('tevarn') || b.includes('takton'));
   } catch {
@@ -332,7 +358,7 @@ async function resolveBackendPort(): Promise<{ port: number; reuse: boolean }> {
   }
   for (const port of CANDIDATE_BACKEND_PORTS) {
     if (await isTevarnRuntimeHost(port)) {
-      console.log(`[Tevarn] Reusing detached Kernel Host on port ${port}`);
+      console.log(`[Tevarn] Reusing detached FastAPI backend on port ${port}`);
       activeBackendPort = port;
       return { port, reuse: true };
     }
@@ -347,7 +373,25 @@ async function resolveBackendPort(): Promise<{ port: number; reuse: boolean }> {
   return { port: DEFAULT_BACKEND_PORT, reuse: false };
 }
 
+function jwtFingerprint(secret: string): string {
+  return crypto.createHash('sha256').update(String(secret || ''), 'utf8').digest('hex').slice(0, 16);
+}
+
+/** Must match backend.api.runtime_identity.can_reuse_detached_backend */
+function isReusableTevarnBackend(body: unknown, expectedFp: string): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const j = body as Record<string, unknown>;
+  if (j.ok !== true) return false;
+  if (j.product !== 'tevarn-aios') return false;
+  const fp = String(j.jwt_fp || '');
+  if (!expectedFp || !fp || fp !== expectedFp) return false;
+  const role = String(j.role || '');
+  // FastAPI control plane only — never treat lying `kernel_host` as reusable.
+  return role === 'fastapi_backend' || role === 'control_plane';
+}
+
 function isTevarnRuntimeHost(port: number): Promise<boolean> {
+  const expectedFp = jwtFingerprint(loadOrCreateSecrets().jwtSecret);
   return new Promise((resolve) => {
     const req = http.get(`http://127.0.0.1:${port}/api/runtime/status`, (res) => {
       let data = '';
@@ -356,7 +400,7 @@ function isTevarnRuntimeHost(port: number): Promise<boolean> {
         try {
           if (res.statusCode !== 200) return resolve(false);
           const j = JSON.parse(data);
-          resolve(j?.ok === true && (j?.product === 'tevarn-aios' || j?.role === 'kernel_host'));
+          resolve(isReusableTevarnBackend(j, expectedFp));
         } catch {
           resolve(false);
         }
@@ -2442,6 +2486,9 @@ ipcMain.handle('install-update', (event) => {
 // ---- App Lifecycle ----
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) {
+    return;
+  }
   ensureDataDirs();
 
   try {

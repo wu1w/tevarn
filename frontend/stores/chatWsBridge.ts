@@ -38,6 +38,11 @@ export type ChatWsHandlers = {
     created_at?: string | null;
     display_content?: string | null;
   }) => void;
+  onUserInputIgnored?: (payload: {
+    reason?: string;
+    detail?: string;
+    agent_running?: boolean;
+  }) => void;
   onSlashResult?: (payload: {
     command?: string;
     reply?: string;

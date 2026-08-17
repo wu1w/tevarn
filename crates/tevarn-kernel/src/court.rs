@@ -78,6 +78,10 @@ pub struct CourtPolicy {
     pub profile: String, // build | plan | cautious
     pub secret_globs: Vec<String>,
     pub secret_allow_globs: Vec<String>,
+    /// Additional allowed path roots (run extra_roots + host data dirs).
+    pub extra_roots: Vec<PathBuf>,
+    /// Mounted MCP runtime tools (`mcp_*`) are user-enabled external caps.
+    pub allow_mcp_prefix: bool,
 }
 
 impl Default for CourtPolicy {
@@ -94,6 +98,8 @@ impl Default for CourtPolicy {
                 .iter()
                 .map(|s| (*s).to_string())
                 .collect(),
+            extra_roots: vec![],
+            allow_mcp_prefix: true,
         }
     }
 }
@@ -360,6 +366,20 @@ pub fn decide_tool(
         }
     }
 
+    // 1b) mounted MCP runtime tools (after secret/user deny)
+    if policy.allow_mcp_prefix && name.starts_with("mcp_") {
+        return CourtDecision::make(
+            name,
+            digest,
+            "allow",
+            "mcp:mounted_allow",
+            "capability",
+            "MCP runtime tool allowlisted (mounted server)",
+            true,
+            None,
+        );
+    }
+
     // 3) skill contract
     if let Some(deny) = skill_deny {
         if deny.iter().any(|d| d == name) {
@@ -404,7 +424,7 @@ pub fn decide_tool(
                 Some(json!({"path": path})),
             );
         }
-        if is_outside_workspace(&path, &policy.workspace_root) {
+        if is_outside_workspace(&path, &policy.workspace_root, &policy.extra_roots) {
             return CourtDecision::make(
                 name,
                 digest,
@@ -733,19 +753,41 @@ fn is_path_escape(path: &str) -> bool {
     path.components().any(|c| matches!(c, Component::ParentDir))
 }
 
-fn is_outside_workspace(path: &str, workspace: &Path) -> bool {
-    let p = Path::new(path);
-    // absolute path outside workspace
-    if p.is_absolute() {
-        let ws = match workspace.canonicalize() {
-            Ok(w) => w,
-            Err(_) => workspace.to_path_buf(),
-        };
-        let full = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-        return !full.starts_with(&ws);
+fn path_is_under(full: &Path, root: &Path) -> bool {
+    if full.starts_with(root) {
+        return true;
     }
-    // relative with parent dir already caught
+    #[cfg(windows)]
+    {
+        let f = full.to_string_lossy().replace('/', "\\").to_lowercase();
+        let r = root
+            .to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase();
+        if f == r || f.starts_with(&(r.clone() + "\\")) {
+            return true;
+        }
+    }
     false
+}
+
+fn is_outside_workspace(path: &str, workspace: &Path, extra_roots: &[PathBuf]) -> bool {
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return false;
+    }
+    let full = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let mut roots: Vec<PathBuf> = Vec::with_capacity(1 + extra_roots.len());
+    roots.push(workspace.to_path_buf());
+    roots.extend(extra_roots.iter().cloned());
+    for root in roots {
+        let ws = root.canonicalize().unwrap_or(root);
+        if path_is_under(&full, &ws) {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -795,5 +837,46 @@ mod tests {
         let d = decide_tool("command", Some(&args), &policy, None, None, None);
         assert_eq!(d.layer, "steward");
         assert_eq!(d.verdict, "deny");
+    }
+
+    #[test]
+    fn mcp_prefix_allowlisted() {
+        let policy = CourtPolicy::default();
+        let d = decide_tool("mcp_github_search", Some(&json!({})), &policy, None, None, None);
+        assert_eq!(d.verdict, "allow");
+        assert_eq!(d.matched_rule, "mcp:mounted_allow");
+    }
+
+    #[test]
+    fn extra_roots_not_path_workspace_deny() {
+        let extra = std::env::temp_dir().join("tevarn-court-extra-root");
+        let file = extra.join("notes.md");
+        let mut policy = CourtPolicy::default();
+        policy.workspace_root = PathBuf::from("/ws-not-this");
+        policy.extra_roots = vec![extra];
+        let d = decide_tool(
+            "file_read",
+            Some(&json!({"path": file.to_string_lossy().to_string()})),
+            &policy,
+            None,
+            None,
+            None,
+        );
+        assert_ne!(d.matched_rule, "path:workspace");
+    }
+
+    #[test]
+    fn mcp_prefix_can_disable() {
+        let mut policy = CourtPolicy::default();
+        policy.allow_mcp_prefix = false;
+        let d = decide_tool(
+            "mcp_github_search",
+            Some(&json!({})),
+            &policy,
+            None,
+            None,
+            None,
+        );
+        assert_ne!(d.matched_rule, "mcp:mounted_allow");
     }
 }

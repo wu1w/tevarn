@@ -1008,6 +1008,15 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                     .filter_map(|x| x.as_str().map(|s| s.to_string()))
                     .collect();
             }
+            if let Some(arr) = params.get("extra_roots").and_then(|x| x.as_array()) {
+                policy.extra_roots = arr
+                    .iter()
+                    .filter_map(|x| x.as_str().map(std::path::PathBuf::from))
+                    .collect();
+            }
+            if let Some(v) = params.get("allow_mcp_prefix").and_then(|x| x.as_bool()) {
+                policy.allow_mcp_prefix = v;
+            }
             kernel.set_court_policy(policy);
             Ok(json!({"ok": true}))
         }
@@ -2503,6 +2512,57 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
                 .unwrap_or_default();
             Ok(kernel.approval_should_auto(caps))
         }
+        "approval_cap_eligible" => {
+            let cap = params
+                .get("cap")
+                .or_else(|| params.get("capability"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let high = params
+                .get("high_risk_auto")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            Ok(kernel.approval_cap_eligible(cap, high))
+        }
+        "session_grant_add" => {
+            let sid = params
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mut sigs: Vec<String> = params
+                .get("sigs")
+                .or_else(|| params.get("signatures"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(s) = params.get("sig").and_then(|v| v.as_str()) {
+                sigs.push(s.to_string());
+            }
+            Ok(kernel.session_grant_add(sid, sigs))
+        }
+        "session_grant_has" => {
+            let sid = params
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sig = params
+                .get("sig")
+                .or_else(|| params.get("signature"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(kernel.session_grant_has(sid, sig))
+        }
+        "session_grant_clear" => {
+            let sid = params
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Ok(kernel.session_grant_clear(sid))
+        }
 
         "emit" => {
             let kind = params.get("kind").and_then(|v| v.as_str()).unwrap_or("custom");
@@ -2536,7 +2596,7 @@ fn handle_method(kernel: &AgentKernel, runtime: &Runtime, method: &str, params: 
 const PUBLIC_METHODS: &[&str] = &["ping", "health", "list_methods", "abi_version"];
 
 /// 确保存在 RPC secret：env 优先，否则读写 `~/.tevarn/rpc.secret`（仅当前用户可读）。
-/// Soft-migrate Takton leftovers: `TAKTON_KERNEL_RPC_SECRET` / `~/.takton/rpc.secret`.
+/// Soft-migrate pre-rebrand leftovers: `TAKTON_KERNEL_RPC_SECRET` / `~/.takton/rpc.secret`.
 fn ensure_rpc_secret() -> String {
     for key in ["TEVARN_KERNEL_RPC_SECRET", "TAKTON_KERNEL_RPC_SECRET"] {
         if let Ok(s) = std::env::var(key) {
@@ -2552,7 +2612,7 @@ fn ensure_rpc_secret() -> String {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     let path = home.join(".tevarn").join("rpc.secret");
-    // Prefer Tevarn path; fall back to legacy Takton secret so upgrades keep working.
+    // Prefer Tevarn path; fall back to legacy ~/.takton secret so upgrades keep working.
     for candidate in [&path, &home.join(".takton").join("rpc.secret")] {
         if let Ok(existing) = std::fs::read_to_string(candidate) {
             let t = existing.trim().to_string();

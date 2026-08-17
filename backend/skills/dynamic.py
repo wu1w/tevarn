@@ -76,23 +76,37 @@ class DynamicSkill(BaseSkill):
                     str(proc_id), "skill_exec", self.name, args=kwargs
                 )
             except KernelPermissionError as e:
-                # 0.4.1 提权交互：skill 不在进程能力集 → 自动发起申请
-                esc_note = ""
-                try:
-                    from backend.core.config import settings as _s
+                from backend.agent.kernel_escalation_ui import (
+                    offer_kernel_capability_confirm,
+                )
 
-                    if bool(getattr(_s, "agent_kernel_auto_escalate", True)):
-                        req = await get_kernel().request_escalation(
-                            str(proc_id), [self.name],
-                            reason=f"dynamic skill 执行被能力集拦截：{self.name}",
+                confirm = await offer_kernel_capability_confirm(
+                    kernel=get_kernel(),
+                    process_id=str(proc_id),
+                    tool_name=self.name,
+                    deny_message=e,
+                    ws_manager=kwargs.get("_ws_manager"),
+                    session_id=kwargs.get("_session_id"),
+                    user_id=kwargs.get("_user_id") or kwargs.get("user_id"),
+                    agent_id=str(kwargs.get("_identity_id") or "").strip() or None,
+                    agent_name=str(
+                        kwargs.get("_identity_name")
+                        or kwargs.get("_contact_agent")
+                        or ""
+                    ).strip()
+                    or None,
+                    capabilities=[self.name],
+                    arguments=kwargs,
+                )
+                if confirm.granted:
+                    try:
+                        await get_kernel().mediate(
+                            str(proc_id), "skill_exec", self.name, args=kwargs
                         )
-                        esc_note = (
-                            f"（已自动发起权限申请 {req.id}，"
-                            "用户在权限控制台批准后即可重试）"
-                        )
-                except ValueError:
-                    pass
-                return f"[Error] Kernel 权限拒绝——{e}{esc_note}"
+                    except KernelPermissionError as e2:
+                        return f"[Error] Kernel 权限拒绝——{e2}"
+                else:
+                    return f"[Error] Kernel 权限拒绝——{e}{confirm.note}"
         if self.handler == "http":
             return await self._run_http(kwargs)
         if self.handler == "python":

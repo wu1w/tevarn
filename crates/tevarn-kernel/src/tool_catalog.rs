@@ -40,7 +40,6 @@ pub static TOOL_TO_CREW_CAP: &[(&str, &str)] = &[
     ("notify", "notify"),
     ("send_email", "notify"),
     ("send_message", "notify"),
-    ("current_time", "web_search"),
     ("session_search", "memory"),
     ("memory", "memory"),
     ("knowledge_search", "memory"),
@@ -53,6 +52,7 @@ pub static TOOL_TO_CREW_CAP: &[(&str, &str)] = &[
     ("clarify", "crew_steward"),
     ("use_tool_pack", "use_tool_pack"),
     ("current_time", "current_time"),
+    ("result_load", "file_read"),
     // Goals: O-KR (okr_goal) + session todos (manage_goal)
     ("okr_goal", "okr_goal"),
     ("manage_goal", "manage_goal"),
@@ -196,5 +196,16 @@ mod tests {
         let tools = tools_for_capabilities(Some(&["file_rw".into()])).unwrap();
         assert!(tools.iter().any(|t| t == "file_read"));
         assert!(tools.iter().any(|t| t == "glob"));
+    }
+
+    #[test]
+    fn catalog_keys_unique_and_time_mapping() {
+        let mut seen = BTreeSet::new();
+        for (t, _) in TOOL_TO_CREW_CAP {
+            assert!(seen.insert(*t), "duplicate tool mapping: {t}");
+        }
+        assert_eq!(crew_cap_for_tool("current_time"), Some("current_time"));
+        assert_eq!(crew_cap_for_tool("result_load"), Some("file_read"));
+        assert_eq!(crew_cap_for_tool("generate_ppt"), Some("file_rw"));
     }
 }

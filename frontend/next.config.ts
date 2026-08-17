@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
-  // Desktop pack: historical dual Takton/Tevarn naming leaves a few type mismatches;
+  // Desktop pack: ignore a few generated type mismatches in the bundled tree;
   // do not block installer generation (root next.config already used this for export).
   // Type gate: tsc --noEmit is green; never hide errors in next build (incl. export).
   typescript: {

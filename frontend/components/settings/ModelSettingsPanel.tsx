@@ -306,7 +306,7 @@ export function ModelSettingsPanel({
   }, [selectedProviderId]);
 
   const notifySettingsChanged = (keys: string[]) => {
-    window.dispatchEvent(new CustomEvent('takton:settings-changed', { detail: keys }));
+    window.dispatchEvent(new CustomEvent('tevarn:settings-changed', { detail: keys }));
   };
 
   const applyMainModel = async () => {

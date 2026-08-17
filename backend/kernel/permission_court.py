@@ -239,6 +239,8 @@ def _try_rust_decide_tool(
             safe_args["_identity_id"] = str(args["_identity_id"])
         if args.get("_workforce") is True:
             safe_args["_workforce"] = True
+        if args.get("_session_id"):
+            safe_args["_session_id"] = str(args["_session_id"])
         # sync identity caps for steward if present
         payload = {
             "name": name,
@@ -284,6 +286,21 @@ def _try_rust_decide_tool(
                 pass
         except Exception:
             pass
+        try:
+            from backend.tools.permissions import get_run_extra_roots, host_data_roots
+
+            roots: list[str] = []
+            seen: set[str] = set()
+            for r in [*get_run_extra_roots(), *host_data_roots()]:
+                sroot = str(r or "").strip()
+                if not sroot or sroot in seen:
+                    continue
+                seen.add(sroot)
+                roots.append(sroot)
+            policy_payload["extra_roots"] = roots
+        except Exception:
+            pass
+        policy_payload["allow_mcp_prefix"] = True
         # 审计 P1-K2：set_court_policy 失败不得静默继续用陈旧/默认策略裁决
         try:
             k._call("set_court_policy", policy_payload)
@@ -342,63 +359,11 @@ async def decide_tool(
             reason="agent_permission_enabled=false",
         )
 
-    # MCP 运行时工具：已挂载即视为用户显式启用的外部能力。
-    # Rust host catalog 不认识动态 mcp_* 名，会 token_scope deny；此处统一放行。
-    # （管理工具 manage_mcp 仍走正常门控。）
-    if str(name).startswith("mcp_"):
-        return CourtDecision(
-            tool=name,
-            args_digest=digest,
-            verdict="allow",
-            matched_rule="mcp:mounted_allow",
-            layer="capability",
-            reason="MCP runtime tool allowlisted (mounted server)",
-            capability_checked=True,
-        )
-
     # T1：Rust court 为权威——有结果直接返回。
+    # extra_roots / mcp_* / session grants 由 host CourtPolicy + SessionGrantStore 裁决。
     # host 可用且 agent_court_rust_required 时：Rust 失败 = deny（禁止静默放宽）。
     rust_dec = _try_rust_decide_tool(name, args, skill_contract=skill_contract)
     if rust_dec is not None:
-        # Rust only knows workspace_root; Python extra_roots (user-mentioned
-        # E:\项目\guardian etc.) must still be readable. Override path:workspace
-        # deny when ToolPermissionManager allows the path.
-        if (
-            rust_dec.verdict == "deny"
-            and str(rust_dec.matched_rule or "") == "path:workspace"
-        ):
-            py_ok = _check_path_permission(name, args)
-            if py_ok is None:
-                logger.info(
-                    "path:workspace overridden by extra_roots tool=%s",
-                    name,
-                )
-                return CourtDecision(
-                    tool=name,
-                    args_digest=digest,
-                    verdict="allow",
-                    matched_rule="path:extra_roots",
-                    layer="path",
-                    reason="allowed under run extra_roots / host data roots",
-                    extra=dict(rust_dec.extra or {}),
-                )
-        # 双保险：Rust 若仍对 mcp_* 返回 deny（旧路径/别名），强制放行
-        if rust_dec.verdict == "deny" and str(name).startswith("mcp_"):
-            logger.info(
-                "mcp_* override rust deny tool=%s rule=%s",
-                name,
-                rust_dec.matched_rule,
-            )
-            return CourtDecision(
-                tool=name,
-                args_digest=digest,
-                verdict="allow",
-                matched_rule="mcp:override_rust_deny",
-                layer="capability",
-                reason=f"MCP allow override (was {rust_dec.matched_rule})",
-                capability_checked=True,
-                extra=dict(rust_dec.extra or {}),
-            )
         return rust_dec
 
     rust_required = bool(getattr(s, "agent_court_rust_required", True))
@@ -462,6 +427,18 @@ async def decide_tool(
     denied = _check_deny_layers(name, args)
     if denied is not None:
         return denied
+
+    # 1b) mounted MCP runtime tools (parity with Rust CourtPolicy.allow_mcp_prefix)
+    if str(name).startswith("mcp_"):
+        return CourtDecision(
+            tool=name,
+            args_digest=digest,
+            verdict="allow",
+            matched_rule="mcp:mounted_allow",
+            layer="capability",
+            reason="MCP runtime tool allowlisted (mounted server)",
+            capability_checked=True,
+        )
 
     # 2) skill contract tools 白名单
     if skill_contract is not None:

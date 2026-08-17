@@ -1,8 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { adoptLegacyPersist } from '@/lib/adoptLegacyPersist';
 
 import zhJson from '@/locales/zh.json';
 import enJson from '@/locales/en.json';
+
+adoptLegacyPersist('tevarn-locale');
 
 export type Locale = 'zh' | 'en';
 

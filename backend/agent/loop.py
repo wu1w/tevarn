@@ -122,6 +122,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._pseudo_tool_leak_streak = 0
         self._terminal_event_emitted = False
         self._llm_fail_streak = 0
+        self._streamed_visible = ""
+        self._final_persisted = False
         # RAG 服务（懒加载）
         self._rag_service = None
 
@@ -155,6 +157,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._goal_complete_summary_nudged = False
         self._plan_mode_active = False
         self._headless_run = False
+        self._streamed_visible = ""
+        self._final_persisted = False
         # MUST clear exit markers so next run cannot inherit fail codes
         self.last_exit_reason = None
         self.last_exit_detail = None
@@ -386,7 +390,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             await self._push_status(
                 session_id,
                 "thinking",
-                f"进程已挂起{('：' + reason) if reason else ''}，等待恢复…",
+                f"正在等待继续…",
             )
             logger.info("kernel 进程挂起等待 proc=%s reason=%s", proc.id, reason)
             def _refresh_from_shared(p):
@@ -414,7 +418,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             if not ok:
                 logger.info("挂起等待被打断 proc=%s（stop 或终态）", proc.id)
                 return "stop"
-            await self._push_status(session_id, "thinking", "进程已恢复，继续执行")
+            await self._push_status(session_id, "thinking", "思考中…")
         # 2) 事前预算检查（不足时先弹性续航，再失败才中断）
         if (
             bool(getattr(settings, "agent_kernel_budget_precheck", True))
@@ -757,7 +761,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 await self._push_status(
                     session_id,
                     "thinking",
-                    "上一轮仍在执行，本条消息排队中…",
+                    "上一轮还在进行，这条会排队执行…",
                 )
             except Exception:
                 pass
@@ -767,7 +771,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 await self._push_status(
                     session_id,
                     "error",
-                    f"会话忙：等待上一轮超过 {_lock_wait:.0f}s，请稍后再发",
+                    "上一轮还没结束，请稍后再发。",
                 )
             except Exception:
                 pass
@@ -1592,9 +1596,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 "kernel_budget_precheck",
                 "budget_exhausted",
                 "goal_stalled",
-                "doom_loop",
-                "thrash",
-                "max_tool_rounds",
                 "error",
                 "tool_error",
             }
@@ -1616,10 +1617,30 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # P0：CancelledError 是 BaseException；清理段用 shield 防二次 cancel 打断漏槽
             async def _cleanup_cancel() -> None:
                 try:
-                    await recorder.cancel("cancelled")
+                    self.last_exit_reason = (
+                        getattr(self, "last_exit_reason", None) or "stopped_by_user"
+                    )
+                except Exception:
+                    pass
+                try:
+                    if not getattr(self, "_final_persisted", False):
+                        draft = (getattr(self, "_streamed_visible", None) or "").strip()
+                        try:
+                            from backend.agent.user_channel import user_visible_content
+
+                            draft = user_visible_content(draft)
+                        except Exception:
+                            pass
+                        await self._persist_final_response(
+                            session_id, draft, skip_if_empty=True
+                        )
+                except Exception as _pe:
+                    logger.debug("cancel persist draft skip: %s", _pe)
+                try:
+                    await recorder.cancel("stopped by user")
                 except Exception as _silent_e:
                     logger.debug("suppressed: %s", _silent_e, exc_info=False)
-                await _release_kernel_slot(state="killed", reason="cancelled")
+                await _release_kernel_slot(state="killed", reason="stopped by user")
 
             try:
                 await asyncio.shield(_cleanup_cancel())
@@ -1630,6 +1651,26 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # P0 审计 N1：except 退出时 Python 会 del e；shield 内闭包若引用 e 会 NameError → 槽位泄漏
             err_msg = str(e)
             async def _cleanup_fail() -> None:
+                try:
+                    self.last_exit_reason = (
+                        getattr(self, "last_exit_reason", None) or "error"
+                    )
+                except Exception:
+                    pass
+                try:
+                    if not getattr(self, "_final_persisted", False):
+                        draft = (getattr(self, "_streamed_visible", None) or "").strip()
+                        try:
+                            from backend.agent.user_channel import user_visible_content
+
+                            draft = user_visible_content(draft)
+                        except Exception:
+                            pass
+                        await self._persist_final_response(
+                            session_id, draft, skip_if_empty=True
+                        )
+                except Exception as _pe:
+                    logger.debug("fail persist draft skip: %s", _pe)
                 try:
                     await recorder.finish_fail(err_msg)
                 except Exception as _silent_e:
@@ -2227,7 +2268,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             await self._push_status(
                 session_id,
                 "thinking",
-                f"场景 {scene_plan.summary()} · 能力 {caps_n} · 工具 {len(tools)}",
+                "思考中…",
                 caps_count=caps_n,
                 tools_count=len(tools),
             )
@@ -2236,7 +2277,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 await self._push_status(
                     session_id,
                     "thinking",
-                    f"场景 {scene_plan.summary()} · 工具 {len(tools)}",
+                    "思考中…",
                     tools_count=len(tools),
                 )
             except Exception as _silent_e:
@@ -2983,7 +3024,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 await self._push_status(
                     session_id,
                     "thinking",
-                    detail=f"model={_model}",
+                    detail="思考中…",
                     model=_model,
                     provider=_prov or None,
                 )
@@ -3051,12 +3092,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 messages, session_id=session_id, threshold=thr, allow_l5=True
             )
             if compress_meta.get("compressed"):
-                layers = compress_meta.get("layers") or []
-                dropped = compress_meta.get("dropped_messages", 0)
                 await self._push_status(
                     session_id,
                     "optimizing",
-                    f"上下文已压缩 layers={layers} dropped={dropped}",
+                    "正在整理上下文…",
                 )
             # seed engine meter from pre-call estimate
             try:
@@ -3280,7 +3319,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         await self._push_status(
                             session_id,
                             "thinking",
-                            f"Applying user steer ({len(_steers)})…",
+                            "已收到补充说明…",
                         )
                         logger.info(
                             "steer injected n=%s session=%s iter=%s",
@@ -3324,19 +3363,21 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             _gate = await self._kernel_iteration_gate(session_id, messages)
             if _gate == "stop":
                 _loop_exit_reason = "kernel_gate_stop"
+                from backend.agent.exit_reasons import format_exit_user_message
+
+                _vis = (accumulated_content or "").strip()
+                final_content = _vis or format_exit_user_message("kernel_gate_stop")
                 break
             if _gate == "budget":
                 _loop_exit_reason = "kernel_budget_precheck"
                 from backend.agent.exit_reasons import format_exit_user_message
 
-                final_content = format_exit_user_message(
-                    "kernel_budget_precheck",
-                    process_id=_kpid_iter or None,
-                )
+                _vis = (accumulated_content or "").strip()
+                final_content = _vis or format_exit_user_message("kernel_budget_precheck")
                 await self._push_status(
                     session_id,
                     "thinking",
-                    "Token 预算不足，运行已事前中断（可 top_up / 缩小范围后重试）",
+                    "额度不够了，已提前停下。",
                 )
                 break
             # PR4: Rust loop_guard budget ratio (85%) → force final before hard kill
@@ -3373,7 +3414,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         _st = (
                             "Token 额度将尽，本轮交卷中…"
                             if _ff_code in ("budget_ratio",)
-                            else "本段工具轮用尽，交卷中…"
+                            else "本段即将结束，正在给出答复…"
                         )
                         await self._push_status(
                             session_id,
@@ -3387,29 +3428,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         )
                 except Exception as _bge:
                     logger.debug("loop_guard budget_check skip: %s", _bge)
-            # 迭代预算：耗尽后最多 1 次 grace（强制无工具终答）
-            if _global_iter >= _total_iters:
-                if _budget_grace_call or _force_final_no_tools:
-                    break
-                _budget_grace_call = True
-                _force_final_no_tools = True
-                _loop_exit_reason = "budget_grace"
-                await self._push_status(
-                    session_id,
-                    "thinking",
-                    f"迭代预算已用尽 ({_iter_budget.used}/{_iter_budget.max_total})，"
-                    "宽限终答中…（可调高 agent_max_iterations 或拆任务）",
-                )
-                logger.info(
-                    "Iteration budget grace session=%s used=%s",
-                    session_id,
-                    _iter_budget.snapshot(),
-                )
-            elif not _iter_budget.consume():
-                _loop_exit_reason = "budget_exhausted"
+            # 迭代预算：Rust process 存在时只走 host consume（避免 Python+Rust 双计数）
+            if _budget_grace_call:
                 break
-            # P0.5：Rust 侧同步 consume；耗尽则优雅退出文案
-            if _kpid_iter and not _budget_grace_call:
+            _rust_iter_consumed = False
+            if _kpid_iter:
                 try:
                     from backend.kernel import get_kernel
 
@@ -3422,17 +3445,43 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         )
                     else:
                         _ic = None
-                    if isinstance(_ic, dict) and _ic.get("status") == "exhausted":
-                        _loop_exit_reason = "kernel_iteration_exhausted"
-                        _budget_grace_call = True
-                        _force_final_no_tools = True
-                        await self._push_status(
-                            session_id,
-                            "thinking",
-                            "内核迭代预算已耗尽，宽限终答中…（见 /kernel/policy）",
-                        )
+                    if isinstance(_ic, dict) and _ic.get("status") in (
+                        "allow",
+                        "exhausted",
+                    ):
+                        _rust_iter_consumed = True
+                        if _ic.get("status") == "exhausted":
+                            _loop_exit_reason = "kernel_iteration_exhausted"
+                            _budget_grace_call = True
+                            _force_final_no_tools = True
+                            await self._push_status(
+                                session_id,
+                                "thinking",
+                                "正在收束并给出答复…",
+                            )
+                        else:
+                            _iter_budget.consume()
                 except Exception as _silent_e:
                     logger.debug("suppressed: %s", _silent_e, exc_info=False)
+                    _rust_iter_consumed = False
+            if not _rust_iter_consumed:
+                if _global_iter >= _total_iters:
+                    _budget_grace_call = True
+                    _force_final_no_tools = True
+                    _loop_exit_reason = "budget_grace"
+                    await self._push_status(
+                        session_id,
+                        "thinking",
+                        f"步数已用完，正在给出答复…",
+                    )
+                    logger.info(
+                        "Iteration budget grace session=%s used=%s",
+                        session_id,
+                        _iter_budget.snapshot(),
+                    )
+                elif not _iter_budget.consume():
+                    _loop_exit_reason = "budget_exhausted"
+                    break
             # P0.5：周期 process snapshot（恢复路径 = 快照 + tail_hash 增量）
             if (
                 _kpid_iter
@@ -3516,7 +3565,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     await self._push_status(
                         session_id,
                         "thinking",
-                        f"自动续跑第 {_segment + 1}/{_max_seg} 段…",
+                        "继续推进…",
                     )
                     # Reset LoopGuard tool_rounds for the new segment (configure
                     # replaces GuardState with tool_rounds=0). Prevents
@@ -3582,10 +3631,12 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # 停止信号检查
             if self._should_stop:
                 logger.info(f"Agent loop stopped by signal for session {session_id}")
+                self.last_exit_reason = "stopped_by_user"
+                _loop_exit_reason = "stopped_by_user"
                 if accumulated_content:
                     final_content = accumulated_content
                 else:
-                    final_content = final_content or "[Stopped] Generation was cancelled"
+                    final_content = final_content or ""
                 break
 
             if _deadline is not None and _time.monotonic() > _deadline:
@@ -3595,8 +3646,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     session_id,
                 )
                 final_content = accumulated_content or (
-                    f"[提示] 已达单次运行时间上限 ({_max_dur:.0f}s)。"
-                    "可发送「请继续」或 POST /api/sessions/{id}/resume 续跑。"
+                    f"已达到单次运行时间上限（{_max_dur:.0f} 秒）。发送「请继续」可以接着做。"
                 )
                 break
 
@@ -3617,7 +3667,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
             # 更新状态：thinking
             await self._push_status(
-                session_id, "thinking", f"思考中 · 第 {iteration + 1} 轮"
+                session_id, "thinking", "思考中…"
             )
 
             # 调用 LLM（流式，phases/llm_round）
@@ -3643,7 +3693,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     await self._push_status(
                         session_id,
                         "thinking",
-                        f"后台任务完成 ×{_n_bg}，已注入结果…",
+                        "思考中…",
                     )
                     logger.info(
                         "bg_complete inject n=%s session=%s",
@@ -4143,14 +4193,15 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             )
             from backend.agent.thinking_format import (
                 ensure_user_facing_final,
-                short_segment_handoff_message,
             )
             from backend.agent.user_channel import user_visible_content
 
-            _raw_end = accumulated_content or (
-                short_segment_handoff_message(goal_mode=goal_mode)
-                + f"（{_max_seg}×{_seg_size} 段上限）"
-            )
+            _loop_exit_reason = _loop_exit_reason or "max_segment_budget"
+            try:
+                self.last_exit_reason = _loop_exit_reason
+            except Exception:
+                pass
+            _raw_end = accumulated_content or ""
             _gsum_end = ""
             try:
                 from backend.agent.goal_state import get_goal as _gg_end
@@ -4205,6 +4256,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         except Exception:
             self._last_messages_for_summary = None
 
+        if getattr(self, "_should_stop", False):
+            self.last_exit_reason = "stopped_by_user"
+            _loop_exit_reason = _loop_exit_reason or "stopped_by_user"
+
         # 收尾聚合（phases/epilogue；行为冻结 tests/test_loop_freeze.py）
         from backend.agent.phases.epilogue import run_epilogue
 
@@ -4234,7 +4289,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         # 不覆盖 llm_round 等已写入的精确退出码（如 llm_stream_error）
         # 仅当尚无精确码 / 仍是 completed 占位时，才用循环级原因覆盖
         _cur = getattr(self, "last_exit_reason", None)
-        if not _cur or _cur in ("", "completed", None):
+        if getattr(self, "_should_stop", False):
+            self.last_exit_reason = "stopped_by_user"
+        elif not _cur or _cur in ("", "completed", None):
             self.last_exit_reason = _loop_exit_reason or "completed"
         # 已有精确码（llm_stream_error 等）→ 保留，不二次覆盖
         # P0.5 R4：结构化退出说明挂到 loop，供 API / harness
@@ -4245,39 +4302,6 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             self.last_exit_detail["process_id"] = _kpid_iter or None
         except Exception:
             self.last_exit_detail = {"code": self.last_exit_reason}
-        # 非正常完成时把恢复提示并入 final（避免静默）
-        if (
-            final_content
-            and self.last_exit_reason
-            and self.last_exit_reason
-            not in ("", "completed")
-            and "[Budget" not in (final_content or "")[:40]
-            and "迭代预算" not in (final_content or "")[:80]
-            and self.last_exit_reason
-            in (
-                "budget_grace",
-                "budget_exhausted",
-                "kernel_iteration_exhausted",
-                "kernel_budget_precheck",
-                "doom_loop",
-                "thrash",
-            )
-            and not (
-                self.last_exit_reason in ("doom_loop", "thrash")
-                and len((final_content or "").strip()) >= 80
-                and not (final_content or "").strip().startswith("正在")
-            )
-        ):
-            try:
-                from backend.agent.exit_reasons import format_exit_user_message
-
-                note = format_exit_user_message(
-                    self.last_exit_reason, process_id=_kpid_iter or None
-                )
-                if note and note not in final_content:
-                    final_content = f"{final_content.rstrip()}\n\n——\n{note}"
-            except Exception as _silent_e:
-                logger.debug("suppressed: %s", _silent_e, exc_info=False)
         return final_content
 
     # ─────────── P0 helpers ───────────

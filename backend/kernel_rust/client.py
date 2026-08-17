@@ -965,8 +965,8 @@ class RustAgentKernel:
     def _inject_rpc_auth(self, params: dict[str, Any] | None) -> dict[str, Any]:
         """注入 RPC 鉴权：env 或 ~/.tevarn/rpc.secret（与 host ensure_rpc_secret 对齐）。
 
-        Soft-migrate Takton leftovers: TAKTON_KERNEL_RPC_SECRET / ~/.takton/rpc.secret.
-        Packaged hosts built before rebrand still read the Takton paths.
+        Soft-migrate pre-rebrand leftovers: TAKTON_KERNEL_RPC_SECRET / ~/.takton/rpc.secret.
+        Packaged hosts built before the rename still read those paths.
         """
         p = dict(params or {})
         secret = (
@@ -1531,6 +1531,8 @@ class RustAgentKernel:
                     safe_args["_identity_id"] = str(args["_identity_id"])
                 if args.get("_workforce") is True:
                     safe_args["_workforce"] = True
+                if args.get("_session_id"):
+                    safe_args["_session_id"] = str(args["_session_id"])
             except Exception:
                 for k, v in args.items():
                     try:
@@ -2698,6 +2700,12 @@ def get_rust_kernel() -> RustAgentKernel:
             sync_catalog_from_kernel(kernel=_rust_singleton)
         except Exception as e:
             logger.debug("catalog sync skip: %s", e)
+        try:
+            from backend.agent.grant_store import rehydrate_session_grants_to_kernel
+
+            rehydrate_session_grants_to_kernel(kernel=_rust_singleton)
+        except Exception as e:
+            logger.debug("session grant rehydrate skip: %s", e)
     return _rust_singleton
 
 

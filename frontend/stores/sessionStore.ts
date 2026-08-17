@@ -7,6 +7,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Message, Session, SessionConfig } from '@/types';
 import * as api from '@/lib/api';
+import { adoptLegacyPersist } from '@/lib/adoptLegacyPersist';
+
+adoptLegacyPersist('tevarn-session');
 
 interface SessionState {
   currentSession: Session | null;

@@ -167,13 +167,8 @@ def short_segment_handoff_message(*, goal_mode: bool = False) -> str:
     is only used when the body is empty or a scare inventory.
     """
     if goal_mode:
-        return (
-            "本段工具轮次已用尽，系统将自动开启下一段继续推进 Goal。"
-            "请勿重复已完成步骤。下一段会先汇总进度再继续执行。"
-        )
-    return (
-        "本段工具轮次已用尽。可发送「请继续」或等待自动续跑开启下一段。"
-    )
+        return "本段已告一段落，将自动开启下一段继续。"
+    return "本段已告一段落。发送「请继续」可以接着做。"
 
 
 def _body_is_real_user_summary(body: str) -> bool:
@@ -237,6 +232,8 @@ def is_generic_segment_handoff(text: Optional[str]) -> bool:
         or "Segment tool rounds exhausted" in body
         or "可发送「请继续」" in body
         or "请继续」或等待自动续跑" in body
+        or "本段已告一段落" in body
+        or "没有生成可见回复" in body
     ):
         return True
     return False
@@ -452,8 +449,14 @@ def ensure_user_facing_final(
     # Do not treat stock handoff as empty either: keep it rather than inventing excerpts.
     if body.strip():
         return body
-    # Truly empty final only — no thinking tags on the user channel
-    return short_segment_handoff_message(goal_mode=goal_mode)
+    reason = (exit_reason or "").strip()
+    if reason in ("stopped_by_user",):
+        return ""
+    from backend.agent.exit_reasons import format_exit_user_message
+
+    if reason in ("", "completed"):
+        reason = "empty_content_thrash"
+    return format_exit_user_message(reason)
 
 
 def strip_force_final_scare_for_context(text: Optional[str]) -> str:

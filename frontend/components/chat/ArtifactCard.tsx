@@ -2,17 +2,12 @@
 
 import React, { useState } from 'react';
 import type { ChatArtifact } from '@/lib/artifacts';
-import { artifactPreviewable } from '@/lib/artifacts';
+import { artifactPreviewable, isInternalRuntimePath, isScratchOrProcessFile } from '@/lib/artifacts';
+import { getPersistedAuthToken } from '@/lib/api';
 import { useT } from '@/stores/localeStore';
 
 function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const auth = localStorage.getItem('tevarn-auth');
-    return auth ? (JSON.parse(auth)?.state?.token ?? null) : null;
-  } catch {
-    return null;
-  }
+  return getPersistedAuthToken();
 }
 
 function apiBase(): string {
@@ -106,6 +101,10 @@ export function ArtifactCard({ artifacts, onPreview }: ArtifactCardProps) {
 
   const handleDownload = async (art: ChatArtifact) => {
     if (busy) return;
+    if (isInternalRuntimePath(art.path) || isScratchOrProcessFile(art.path)) {
+      setErr(art.path);
+      return;
+    }
     setBusy(art.path);
     setErr(null);
     try {

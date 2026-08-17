@@ -189,6 +189,12 @@ interface UseWebSocketOptions {
     content: string;
     created_at?: string | null;
   }) => void;
+  /** Dedup dropped a duplicate user_input — never treat as idle */
+  onUserInputIgnored?: (payload: {
+    reason?: string;
+    detail?: string;
+    agent_running?: boolean;
+  }) => void;
   /** Web 聊天 /命令结果（如 /help /status /new） */
   onSlashResult?: (payload: {
     command?: string;
@@ -504,6 +510,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
               /* ignore */
             }
           }
+        } else if (msg.type === 'user_input_ignored') {
+          const m = msg as unknown as {
+            reason?: string;
+            detail?: string;
+            agent_running?: boolean;
+          };
+          optionsRef.current.onUserInputIgnored?.({
+            reason: m.reason,
+            detail: m.detail,
+            agent_running: Boolean(m.agent_running),
+          });
         } else if (msg.type === 'user_message_ack') {
           const m = msg as unknown as {
             id?: string;

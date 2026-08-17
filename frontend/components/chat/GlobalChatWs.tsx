@@ -49,6 +49,9 @@ export function GlobalChatWs() {
     onUserMessageAck: (payload) => {
       chatWsHandlers().onUserMessageAck?.(payload);
     },
+    onUserInputIgnored: (payload) => {
+      chatWsHandlers().onUserInputIgnored?.(payload);
+    },
     onSlashResult: (payload) => {
       chatWsHandlers().onSlashResult?.(payload);
     },

@@ -958,8 +958,12 @@ async def websocket_endpoint(
 
     # ---- 用户认证（优先 query token；否则 accept 后等首条 auth 消息）----
     # 注意：WebSocket 只能 accept 一次。消息鉴权路径会先 accept，后面禁止再 accept。
+    # 首包若不是 auth（loopback 客户端直接 sync），必须回放到主循环，不能丢弃。
+    from backend.api.ws_handshake import auth_ok_payload, parse_first_ws_frame
+
     token_from_query = (token or "").strip()
     token_from_message = None
+    pending_first_raw: str | None = None
     accepted = False
 
     async def _accept_once() -> None:
@@ -970,15 +974,25 @@ async def websocket_endpoint(
 
     if not token_from_query:
         await _accept_once()
+        loopback_free = settings.single_user_mode and _ws_client_is_loopback(
+            websocket
+        )
         try:
             raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
-            if not raw_auth or not raw_auth.strip():
-                await websocket.close(code=4001, reason="Empty auth message")
+        except asyncio.TimeoutError:
+            if not loopback_free:
+                try:
+                    await websocket.send_json(
+                        {"type": "error", "detail": "Authentication required"}
+                    )
+                except Exception:
+                    pass
+                await safe_close_ws(
+                    websocket, code=1008, reason="Authentication required"
+                )
                 return
-            auth_data = json.loads(raw_auth)
-            if auth_data.get("type") == "auth":
-                token_from_message = auth_data.get("token", "")
-        except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+            raw_auth = None
+        except Exception:
             try:
                 await websocket.send_json(
                     {"type": "error", "detail": "Authentication required"}
@@ -987,6 +1001,18 @@ async def websocket_endpoint(
                 pass
             await safe_close_ws(websocket, code=1008, reason="Authentication required")
             return
+        else:
+            if not raw_auth or not raw_auth.strip():
+                if not loopback_free:
+                    await websocket.close(code=4001, reason="Empty auth message")
+                    return
+                raw_auth = None
+        if raw_auth:
+            first = parse_first_ws_frame(raw_auth)
+            if first.is_auth:
+                token_from_message = first.token
+            else:
+                pending_first_raw = first.pending_raw
 
     effective_token = token_from_query or token_from_message or ""
 
@@ -1168,6 +1194,12 @@ async def websocket_endpoint(
 
     await manager.connect(session_id, websocket, user_id=user_id)
 
+    # Handshake ack: token clients wait for this before sync (else 1.5s fallback).
+    try:
+        await websocket.send_json(auth_ok_payload(user_id))
+    except Exception:
+        pass
+
     # 重连恢复：若该 session 后台 agent 仍在跑，立刻推 status
     if manager.has_running_agent(session_id):
         try:
@@ -1201,7 +1233,11 @@ async def websocket_endpoint(
 
     try:
         while True:
-            raw = await websocket.receive_text()
+            if pending_first_raw is not None:
+                raw = pending_first_raw
+                pending_first_raw = None
+            else:
+                raw = await websocket.receive_text()
             if not raw or not raw.strip():
                 continue
             try:
@@ -1257,7 +1293,10 @@ async def websocket_endpoint(
                 # Short-window dedup: reconnect/double-send same text (mobile/PC)
                 if not regenerate:
                     try:
-                        from backend.api.chat_dedup import should_drop_duplicate_user
+                        from backend.api.chat_dedup import (
+                            duplicate_ack_payload,
+                            should_drop_duplicate_user,
+                        )
 
                         if should_drop_duplicate_user(session_id, user_input):
                             logger.info(
@@ -1267,11 +1306,11 @@ async def websocket_endpoint(
                             )
                             await manager.broadcast(
                                 session_id,
-                                {
-                                    "type": "status",
-                                    "state": "idle",
-                                    "detail": "忽略重复发送（短时相同内容）",
-                                },
+                                duplicate_ack_payload(
+                                    agent_running=manager.has_running_agent(
+                                        session_id
+                                    )
+                                ),
                             )
                             continue
                     except Exception as _dd:
@@ -1452,7 +1491,7 @@ async def websocket_endpoint(
                                 {
                                     "type": "status",
                                     "state": "thinking",
-                                    "detail": f"Queued ({n}) — runs after current turn",
+                                    "detail": f"已排队（{n}），本轮结束后执行",
                                 },
                             )
                             try:
@@ -1492,7 +1531,7 @@ async def websocket_endpoint(
                             {
                                 "type": "status",
                                 "state": "idle",
-                                "detail": "Generation stopped by user",
+                                "detail": "已停止",
                             },
                         )
                         continue
@@ -1509,7 +1548,7 @@ async def websocket_endpoint(
                         {
                             "type": "status",
                             "state": "thinking",
-                            "detail": "Stopping previous run to start new input...",
+                            "detail": "正在结束上一轮…",
                         },
                     )
                     await manager.cancel_agent(session_id, wait=6.0)
@@ -1566,7 +1605,7 @@ async def websocket_endpoint(
                     pass
                 await manager.broadcast(
                     session_id,
-                    {"type": "status", "state": "idle", "detail": "Generation stopped by user"},
+                    {"type": "status", "state": "idle", "detail": "已停止"},
                 )
 
             elif msg_type == "confirm_response":
@@ -1606,7 +1645,7 @@ async def websocket_endpoint(
                     manager._run_snapshots[session_id] = SessionRunSnapshot(
                         agent_running=True,
                         state="thinking",
-                        detail="Resuming…",
+                        detail="正在恢复…",
                         updated_at=time.time(),
                     )
                     snap = manager.get_run_snapshot(session_id)
@@ -1819,7 +1858,7 @@ async def _run_agent_safe(
                         {
                             "type": "status",
                             "state": "thinking",
-                            "detail": "Starting queued message…",
+                            "detail": "开始处理排队消息…",
                         },
                     )
                     agent._should_stop = False
@@ -1857,7 +1896,7 @@ async def _run_agent_safe(
                 manager.end_run_snapshot(session_id)
                 await manager.broadcast(
                     session_id,
-                    {"type": "status", "state": "idle", "detail": "Generation stopped"},
+                    {"type": "status", "state": "idle", "detail": "已停止"},
                 )
             except Exception:
                 pass
@@ -1874,9 +1913,20 @@ async def _run_agent_safe(
             session_id,
             {
                 "type": "error",
-                "detail": f"Agent error: {str(e)}",
+                "detail": "出错了，请再试一次。",
             },
         )
+        try:
+            await manager.broadcast(
+                session_id,
+                {
+                    "type": "status",
+                    "state": "idle",
+                    "detail": "出错了，请再试一次。",
+                },
+            )
+        except Exception:
+            pass
     finally:
         try:
             _run_gen_ctx.reset(_gen_token)

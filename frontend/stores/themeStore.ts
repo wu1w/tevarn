@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { adoptLegacyPersist } from '@/lib/adoptLegacyPersist';
+
+adoptLegacyPersist('tevarn-theme');
 
 /** 用户偏好：system=跟随系统，light/dark=强制 */
 export type ThemePreference = 'system' | 'light' | 'dark';

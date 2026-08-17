@@ -39,6 +39,7 @@ pub mod process_snapshot;
 pub mod resource;
 pub mod result_store;
 pub mod scheduler;
+pub mod session_grants;
 pub mod tool_catalog;
 pub mod llm_admission;
 pub mod isolation;
@@ -387,4 +388,8 @@ pub const ABI_METHODS: &[&str] = &[
     "approval_get_rules",
     "approval_classify",
     "approval_should_auto",
+    "approval_cap_eligible",
+    "session_grant_add",
+    "session_grant_has",
+    "session_grant_clear",
 ];

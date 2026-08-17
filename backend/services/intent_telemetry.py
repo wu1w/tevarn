@@ -18,7 +18,7 @@ _MAX_LINES = 2000
 
 
 def _telemetry_path() -> Path:
-    override = (os.environ.get("TAKTON_INTENT_TELEMETRY") or os.environ.get("TEVARN_INTENT_TELEMETRY") or "").strip()
+    override = (os.environ.get("TEVARN_INTENT_TELEMETRY") or os.environ.get("TAKTON_INTENT_TELEMETRY") or "").strip()
     if override:
         return Path(override)
     try:

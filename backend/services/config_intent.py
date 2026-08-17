@@ -863,7 +863,7 @@ async def _exec_proxy(payload: dict[str, Any]) -> dict[str, Any]:
     if not enabled:
         return {
             "ok": True,
-            "message": "已关闭 Tevarn/Takton 出站代理（立即生效）。",
+            "message": "已关闭 Tevarn 出站代理（立即生效）。",
             "detail": "off",
         }
     return {

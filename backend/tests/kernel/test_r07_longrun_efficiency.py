@@ -59,8 +59,10 @@ def test_budget_exit_message_has_recovery():
     from backend.agent.exit_reasons import format_exit_user_message
 
     msg = format_exit_user_message("budget_exhausted", process_id="p1")
-    assert "预算" in msg or "Budget" in msg or "budget" in msg.lower()
-    assert "恢复" in msg or "resume" in msg.lower() or "top_up" in msg or "提高" in msg
+    assert "步数" in msg or "请继续" in msg
+    assert "p1" not in msg
+    assert "top_up" not in msg
+    assert "/api/" not in msg
 
 
 # ── R-03 end_process cascade + cap clear ─────────────────────

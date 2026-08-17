@@ -108,6 +108,13 @@ class LoopIOMixin:
         delta: str,
     ) -> None:
         """推送流式文本：优先 EventSinkPort，回落 ws_manager。"""
+        try:
+            if delta:
+                self._streamed_visible = (
+                    getattr(self, "_streamed_visible", "") or ""
+                ) + str(delta)
+        except Exception:
+            pass
         sink = getattr(self, "event_sink", None)
         if sink is not None:
             try:
@@ -518,7 +525,7 @@ class LoopIOMixin:
             )
 
     async def _persist_final_response(
-        self, session_id: uuid.UUID, final_content: str
+        self, session_id: uuid.UUID, final_content: str, *, skip_if_empty: bool = False
     ) -> None:
         """原子化保存最终回复：Message + CtxItem + Session 状态 + 通知"""
         text = (final_content or "").strip()
@@ -529,10 +536,21 @@ class LoopIOMixin:
         except Exception:
             pass
         if not text:
-            text = (
-                "（本轮未生成可见正文：可能只调用了工具且后续未总结。"
-                "请再发一条消息，或点「请继续」。若持续空白，可检查设备/RAG 相关工具是否报错。）"
-            )
+            if skip_if_empty or str(getattr(self, "last_exit_reason", "") or "") in (
+                "stopped_by_user",
+            ):
+                try:
+                    async with get_db_context() as db:
+                        session_repo = AsyncSessionRepository(db)
+                        await session_repo.update(
+                            session_id,
+                            {"status": "idle", "updated_at": datetime.now(timezone.utc)},
+                        )
+                except Exception as e:
+                    logger.debug("idle after empty stop persist skip: %s", e)
+                self._final_persisted = True
+                return
+            text = "这一轮没有生成可见回复。直接发送下一条即可。"
         try:
             from backend.services.secret_redact import redact_secrets
 
@@ -571,6 +589,7 @@ class LoopIOMixin:
                     "data": {"session_id": str(session_id)},
                     "source_id": str(session_id),
                 })
+        self._final_persisted = True
 
     def _build_user_input_with_attachments(
         self, user_input: str, attachments: list[dict[str, Any]]

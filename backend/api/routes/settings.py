@@ -1185,7 +1185,7 @@ async def test_embedding(
             svc = LocalEmbeddingService()
 
         EmbeddingServiceFactory.reset()
-        vec = await svc.embed_query("takton embedding ping")
+        vec = await svc.embed_query("tevarn embedding ping")
         dim = len(vec) if vec else 0
         if dim <= 0:
             return {"ok": False, "message": f"Embedding 返回空向量 · provider={provider} · {base}"}
@@ -3157,7 +3157,7 @@ async def generate_bridge_token(
         key="bridge_token",
         value=token,
         category="security",
-        description="Takton Code ↔ Desktop 桥接令牌（设置页生成）",
+        description="Tevarn Code ↔ Desktop 桥接令牌（设置页生成）",
     )
     apply_setting_value("bridge_token", token)
     await log_action(

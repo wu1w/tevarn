@@ -130,6 +130,65 @@ pub fn evolution_requires_review() -> bool {
     true
 }
 
+/// Steward auto-grant eligibility (parity with Python `steward_auto_grant`).
+pub fn cap_eligible_for_auto(cap: &str, high_risk_auto: bool) -> bool {
+    let c = cap.trim().to_lowercase();
+    if c.is_empty() {
+        return false;
+    }
+    const NEVER: &[&str] = &[
+        "sudo", "delete", "rm", "egress", "mcp", "subagent", "spawn", "*",
+    ];
+    if NEVER.contains(&c.as_str()) {
+        return false;
+    }
+    if NEVER.iter().any(|n| *n != "*" && c.contains(n)) {
+        return false;
+    }
+    const LOW: &[&str] = &[
+        "file_read",
+        "web_search",
+        "web_extract",
+        "search",
+        "glob",
+        "grep",
+        "list_dir",
+        "memory_read",
+        "wiki_read",
+        "knowledge_query",
+        "rag_query",
+        "current_time",
+        "clarify",
+        "notify",
+        "db_read",
+        "calendar",
+    ];
+    if LOW.contains(&c.as_str())
+        || c.starts_with("read")
+        || c.starts_with("search")
+        || c.starts_with("list")
+    {
+        return true;
+    }
+    const JOB_HIGH: &[&str] = &[
+        "command",
+        "terminal",
+        "shell",
+        "file_rw",
+        "file_write",
+        "file_edit",
+        "git",
+        "browser",
+        "computer",
+        "python",
+        "process",
+    ];
+    if JOB_HIGH.contains(&c.as_str()) {
+        return high_risk_auto;
+    }
+    false
+}
+
 pub struct ApprovalPolicy {
     rules: ApprovalRules,
 }
@@ -181,5 +240,18 @@ mod tests {
         ));
         assert!(!should_auto_approve(&r, &["terminal".into()]));
         assert!(evolution_requires_review());
+    }
+
+    #[test]
+    fn cap_eligible_matches_steward_policy() {
+        assert!(cap_eligible_for_auto("web_search", true));
+        assert!(cap_eligible_for_auto("file_read", false));
+        assert!(cap_eligible_for_auto("command", true));
+        assert!(!cap_eligible_for_auto("command", false));
+        assert!(!cap_eligible_for_auto("sudo", true));
+        assert!(!cap_eligible_for_auto("*", true));
+        assert!(!cap_eligible_for_auto("http", true));
+        assert!(!cap_eligible_for_auto("network", true));
+        assert!(!cap_eligible_for_auto("manage_mcp", true));
     }
 }

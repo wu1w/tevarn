@@ -257,7 +257,7 @@ async def run_no_tool_round(
                     await loop._push_status(
                         session_id,
                         "thinking",
-                        f"Goal 未完成，自动续跑 ({result.goal_nudge_count}/{max_nudges})…",
+                        "继续推进…",
                     )
                 nudge = (
                     "[System] Goal is incomplete — do not finish with text only. "
@@ -295,11 +295,7 @@ async def run_no_tool_round(
                 session_id,
             )
             result.action = "break"
-            result.final_content = (
-                accumulated_content
-                or accumulated_reasoning
-                or "[Stopped] Model returned empty replies repeatedly. Please retry."
-            )
+            result.final_content = accumulated_content or accumulated_reasoning or ""
             try:
                 loop.last_exit_reason = "empty_content_thrash"
             except Exception:
@@ -315,7 +311,7 @@ async def run_no_tool_round(
             await loop._push_status(
                 session_id,
                 "thinking",
-                f"模型空回复，重试 {_empty_reply_retries}/{empty_reply_max}…",
+                "思考中…",
             )
             messages.append(
                 {
@@ -350,10 +346,7 @@ async def run_no_tool_round(
                     _empty_reply_retries,
                 )
                 result.action = "break"
-                result.final_content = (
-                    accumulated_reasoning
-                    or "[Stopped] Empty model replies. Please retry the last message."
-                )
+                result.final_content = accumulated_reasoning or ""
                 try:
                     loop.last_exit_reason = "empty_content_thrash"
                 except Exception:
@@ -363,7 +356,7 @@ async def run_no_tool_round(
             await loop._push_status(
                 session_id,
                 "thinking",
-                "空回复重试耗尽，强制生成最终文字…",
+                "正在给出答复…",
             )
             messages.append(
                 {
@@ -411,7 +404,7 @@ async def run_no_tool_round(
                 await loop._push_status(
                     session_id,
                     "thinking",
-                    f"补充取证（{_ver.reason}）…",
+                    "思考中…",
                 )
                 messages.append(
                     {"role": "system", "content": _ver.nudge}

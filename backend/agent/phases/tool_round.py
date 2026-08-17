@@ -2856,6 +2856,7 @@ async def run_tool_round(
                     ),
                 }
             )
+        _rust_doom_consulted = False
         if _doom_on and _kpid:
             try:
                 from backend.kernel import get_kernel
@@ -2886,12 +2887,15 @@ async def run_tool_round(
                         )
                     else:
                         _dr = None
+                    if _dr is not None:
+                        _rust_doom_consulted = True
                     if isinstance(_dr, dict) and _dr.get("status") == "doom_loop":
                         _tripped = True
                         break
             except Exception:
                 _tripped = False
-        if not _tripped and _doom_on:
+                _rust_doom_consulted = False
+        if not _tripped and _doom_on and not _rust_doom_consulted:
             # Filter process-poll calls out of local ToolRepeatGuard while waiting
             _calls_for_doom = _calls
             _sigs_for_doom = _sigs

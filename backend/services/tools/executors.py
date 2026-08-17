@@ -1436,7 +1436,7 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
         return (
             f"[Error] Command spawn NotImplementedError: {msg}. "
             "Backend should use threaded Popen fallback (safe_subprocess). "
-            "Restart Tevarn/Takton if this persists after update; "
+            "Restart Tevarn if this persists after update; "
             "retry with `cargo -V` then `cargo check -p <crate>`."
         )
     except Exception as e:
