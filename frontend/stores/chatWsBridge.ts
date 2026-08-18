@@ -54,6 +54,7 @@ export type ChatWsHandlers = {
   onRunEvent?: (msg: RunEventMessage) => void;
   onGoalUpdate?: (msg: GoalUpdateMessage) => void;
   onError?: (err: string) => void;
+  onSessionDeleted?: (sessionId: string) => void;
   getLastMessageId?: () => string | undefined;
 };
 

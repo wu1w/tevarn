@@ -132,6 +132,8 @@ async def _prefetch_readonly_calls(
         return {}
     if not bool(getattr(settings, "agent_tool_parallel", True)):
         return {}
+    if getattr(loop, "_should_stop", False):
+        return {}
 
     from backend.tools.registry import ToolRegistry as UnifiedToolRegistry
 
@@ -156,6 +158,8 @@ async def _prefetch_readonly_calls(
 
     async def _run(tc: Any, tool: Any) -> tuple[Any, BaseException | None]:
         async with sem:
+            if getattr(loop, "_should_stop", False):
+                return "[Cancelled] stopped by user", None
             try:
                 args = loop._validate_tool_args(tool.parameters, tc.arguments)
                 if loop.user_id is not None:
@@ -181,18 +185,39 @@ async def _prefetch_readonly_calls(
                         None,
                     )
                 return await loop._execute_registered_tool(tc.name, args), None
+            except asyncio.CancelledError:
+                return "[Cancelled] stopped by user", None
             except BaseException as e:  # 原样带回串行主体重抛
                 return "", e
 
     t0 = _time.monotonic()
-    results = await asyncio.gather(*(_run(tc, tool) for tc, tool in tools))
+    tasks = [asyncio.create_task(_run(tc, tool)) for tc, tool in tools]
+
+    async def _watch_stop() -> None:
+        while not getattr(loop, "_should_stop", False):
+            if all(t.done() for t in tasks):
+                return
+            await asyncio.sleep(0.1)
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+
+    watcher = asyncio.create_task(_watch_stop())
+    raw = await asyncio.gather(*tasks, return_exceptions=True)
+    watcher.cancel()
+    out: dict[Any, tuple[Any, BaseException | None]] = {}
+    for (tc, _), item in zip(tools, raw, strict=True):
+        if isinstance(item, tuple) and len(item) == 2:
+            out[tc.id] = item  # type: ignore[assignment]
+        else:
+            out[tc.id] = ("[Cancelled] stopped by user", None)
     logger.info(
         "parallel tool prefetch: %s calls (%s) in %.0fms",
         len(tools),
         ",".join(getattr(tc, "name", "?") for tc, _ in tools),
         (_time.monotonic() - t0) * 1000,
     )
-    return {tc.id: res for (tc, _), res in zip(tools, results, strict=True)}
+    return out
 
 
 async def run_tool_round(
@@ -767,6 +792,32 @@ async def run_tool_round(
 
     # 执行每个 tool call
     for tc in tool_calls:
+        if getattr(loop, "_should_stop", False) and str(getattr(tc, "id", "") or "") not in _capped_results and getattr(tc, "id", None) not in prefetched:
+            _cancel = "[Cancelled] stopped by user"
+            _args = tc.arguments if isinstance(tc.arguments, dict) else {}
+            if not isinstance(_args, dict):
+                _args = {}
+            try:
+                await loop._push_tool_event(
+                    session_id,
+                    phase="end",
+                    tool_call_id=tc.id,
+                    name=tc.name,
+                    arguments=_args,
+                    status="failed",
+                    result=_cancel,
+                )
+            except Exception:
+                pass
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": tc.name,
+                    "content": _cancel,
+                }
+            )
+            continue
         # Durable Run：首个工具触发 EXECUTING；记录起始时间
         _tc_t0 = _time.monotonic()
         if _rc is not None:
@@ -3016,7 +3067,7 @@ async def run_tool_round(
                 or state.tool_rounds % l5_every == 0
             )
         )
-        # audit-fix(#1)：阈值默认引用单点常量（0.55/0.45 → 0.85/0.75）；
+        # audit-fix(#1)：阈值默认引用单点常量 COMPRESS_THRESHOLD；
         # settings.context_threshold_percent 覆盖机制保留
         from backend.agent.context_engine import (
             COMPRESS_THRESHOLD,

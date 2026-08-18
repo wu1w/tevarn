@@ -36,7 +36,7 @@ import type {
   CronHookUpdate,
 } from '@/types/zero-code';
 import type { CronJob } from '@/types';
-import { t, useT } from '@/stores/localeStore';
+import { useConfirm } from '@/components/desktop/ConfirmDialog';
 
 // ────────────────── 子组件：Webhook 表单对话框 ──────────────────
 
@@ -285,6 +285,7 @@ function HookFormDialog({
 
 export default function CronWebhookPanel() {
   const t = useT();
+  const { confirm, ConfirmDialogComponent } = useConfirm();
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
   const [hooksMap, setHooksMap] = useState<Record<string, CronHook[]>>({});
@@ -347,7 +348,8 @@ export default function CronWebhookPanel() {
   };
 
   const handleDeleteWebhook = async (id: string) => {
-    if (!confirm(t('cron-webhook._e96'))) return;
+    const ok = await confirm(t('cron-webhook._e96'));
+    if (!ok) return;
     try {
       await webhookApi.delete(id);
       loadData();
@@ -369,7 +371,8 @@ export default function CronWebhookPanel() {
   );
 
   const handleDeleteHook = async (id: string) => {
-    if (!confirm(t('cron-webhook._e97'))) return;
+    const ok = await confirm(t('cron-webhook._e97'));
+    if (!ok) return;
     try {
       await cronHookApi.delete(id);
       loadData();
@@ -567,6 +570,7 @@ export default function CronWebhookPanel() {
           onSaved={loadData}
         />
       )}
+      {ConfirmDialogComponent}
     </div>
   );
 }

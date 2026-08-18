@@ -52,7 +52,7 @@ export interface MessageInputHandle {
 }
 
 interface MessageInputProps {
-  onSend: (content: string, attachments: Attachment[], mode: ChatMode, subAgentIds?: string[], control?: 'steer' | 'queue' | 'interrupt') => void;
+  onSend: (content: string, attachments: Attachment[], mode: ChatMode, subAgentIds?: string[], control?: 'steer' | 'queue' | 'interrupt') => void | boolean | Promise<void | boolean>;
   onGenerateImage?: (prompt: string) => void;
   disabled?: boolean;
   placeholder?: string;
@@ -393,7 +393,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     return true;
   };
 
-  const handleSend = (control?: 'steer' | 'queue' | 'interrupt') => {
+  const handleSend = async (control?: 'steer' | 'queue' | 'interrupt') => {
     setToolsOpen(false);
     setMoreOpen(false);
     const trimmed = content.trim();
@@ -461,7 +461,20 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       type,
       text_content,
     }));
-    onSend(trimmed, payload, mode, subIds, effectiveControl);
+    try {
+      const ok = await Promise.resolve(
+        onSend(trimmed, payload, mode, subIds, effectiveControl),
+      );
+      if (ok === false) {
+        sendingRef.current = false;
+        window.setTimeout(() => focusComposer(), 0);
+        return;
+      }
+    } catch {
+      sendingRef.current = false;
+      window.setTimeout(() => focusComposer(), 0);
+      return;
+    }
     setContent('');
     attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl));
     setAttachments([]);

@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
+_last_court_policy_digest: str | None = None
 
 Verdict = Literal["allow", "deny", "ask"]
 Layer = Literal[
@@ -302,8 +303,13 @@ def _try_rust_decide_tool(
             pass
         policy_payload["allow_mcp_prefix"] = True
         # 审计 P1-K2：set_court_policy 失败不得静默继续用陈旧/默认策略裁决
+        global _last_court_policy_digest
         try:
-            k._call("set_court_policy", policy_payload)
+            blob = json.dumps(policy_payload, sort_keys=True, default=str)
+            digest_p = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+            if digest_p != _last_court_policy_digest:
+                k._call("set_court_policy", policy_payload)
+                _last_court_policy_digest = digest_p
         except Exception as policy_err:
             logger.warning(
                 "set_court_policy failed tool=%s: %s: %s — fail-closed deny",
@@ -350,6 +356,10 @@ async def decide_tool(
     s = _settings()
 
     if not bool(getattr(s, "agent_permission_enabled", True)):
+        logger.info(
+            "court short-circuit allow tool=%s (agent_permission_enabled=false)",
+            name,
+        )
         return CourtDecision(
             tool=name,
             args_digest=digest,

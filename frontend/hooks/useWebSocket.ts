@@ -35,6 +35,7 @@ import {
   createPingMessage,
   createSyncMessage,
   createStopMessage,
+  isSessionDeleted,
 } from '@/lib/ws';
 
 /** 运行时下发的 WS 基址缓存（getRuntimeEndpoints） */
@@ -165,6 +166,8 @@ interface UseWebSocketOptions {
   onError?: (error: string) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  /** 对端删会话 / 服务端 4004：停止重连 */
+  onSessionDeleted?: (sessionId: string) => void;
   onSyncResponse?: (payload: {
     messages: Array<{ id: string; role: string; content: string; created_at?: string | null }>;
     agent_running?: boolean;
@@ -219,6 +222,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
   /** 被其它 Tab 以 1001 踢下线：禁止自动重连抢主 */
   const [kickedByPeer, setKickedByPeer] = useState(false);
   const kickedByPeerRef = useRef(false);
+  /** 会话已不存在：禁止自动重连 */
+  const sessionGoneRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   /** Monotonic run_event seq for reconnect cursor */
   const lastEventSeqRef = useRef<number>(0);
@@ -259,9 +264,13 @@ export function useWebSocket(options: UseWebSocketOptions) {
     if (kickedByPeerRef.current && !opts?.force) {
       return;
     }
+    if (sessionGoneRef.current && !opts?.force) {
+      return;
+    }
     if (opts?.force) {
       kickedByPeerRef.current = false;
       setKickedByPeer(false);
+      sessionGoneRef.current = false;
     }
 
     // 已连上同一 session
@@ -405,11 +414,20 @@ export function useWebSocket(options: UseWebSocketOptions) {
         try { useWsStore.getState().setConnected(false); } catch (e) { console.error(e); }
         // 1001 = 其它连接顶替本 session（后端单连接踢旧）
         // 不自动重连，避免双 Tab 互抢；用户可点「夺取连接」
+        const gone =
+          !intentionalCloseRef.current &&
+          (ev?.code === 4004 ||
+            /session deleted/i.test(String(ev?.reason || '')));
         const kicked =
           !intentionalCloseRef.current &&
+          !gone &&
           (ev?.code === 1001 ||
             /new connection|replaced|another/i.test(String(ev?.reason || '')));
-        if (kicked) {
+        if (gone) {
+          sessionGoneRef.current = true;
+          intentionalCloseRef.current = true;
+          optionsRef.current.onSessionDeleted?.(sid);
+        } else if (kicked) {
           kickedByPeerRef.current = true;
           setKickedByPeer(true);
           optionsRef.current.onError?.(
@@ -494,6 +512,10 @@ export function useWebSocket(options: UseWebSocketOptions) {
             }
           } catch (e) { console.error(e); }
           optionsRef.current.onNotification?.(notif);
+        } else if (isSessionDeleted(msg)) {
+          sessionGoneRef.current = true;
+          intentionalCloseRef.current = true;
+          optionsRef.current.onSessionDeleted?.(sid);
         } else if (msg.type === 'settings_changed') {
           const keys = (msg as unknown as { keys?: string[] }).keys || [];
           optionsRef.current.onSettingsChanged?.(keys);
@@ -675,6 +697,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
       if (kickedByPeerRef.current) {
         return Promise.resolve(false);
       }
+      if (sessionGoneRef.current) {
+        return Promise.resolve(false);
+      }
 
       if (
         wsRef.current?.readyState === WebSocket.OPEN &&
@@ -775,6 +800,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
       // 切会话：清被踢状态，允许新会话连接
       kickedByPeerRef.current = false;
       setKickedByPeer(false);
+      sessionGoneRef.current = false;
       reconnectAttempts.current = 0;
       lastEventSeqRef.current = 0;
       connect(sessionId, { force: true });
@@ -790,6 +816,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     if (!sessionId) return;
     if (isConnected || isConnecting) return;
     if (kickedByPeer || kickedByPeerRef.current) return;
+    if (sessionGoneRef.current) return;
 
     const fastExhausted = reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS;
     const delay = fastExhausted
@@ -809,6 +836,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     const timer = setTimeout(() => {
       if (!sessionIdRef.current) return;
       if (kickedByPeerRef.current) return;
+      if (sessionGoneRef.current) return;
       if (wsRef.current?.readyState === WebSocket.OPEN) return;
       reconnectAttempts.current += 1;
       connect(sessionIdRef.current);

@@ -1962,6 +1962,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             if len(history_for_build) >= max(24, _soft_pre):
                 from backend.agent.context_compress import compress_history_if_needed
                 from backend.agent.context_engine import (
+                    COMPRESS_THRESHOLD,
                     COMPRESS_THRESHOLD_DEEP,
                     get_context_engine,
                 )
@@ -1976,7 +1977,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     session_id=session_id,
                     threshold=min(
                         float(
-                            getattr(settings, "context_threshold_percent", 0.85) or 0.85
+                            getattr(settings, "context_threshold_percent", COMPRESS_THRESHOLD)
+                            or COMPRESS_THRESHOLD
                         ),
                         float(COMPRESS_THRESHOLD_DEEP),
                         0.55,
@@ -3072,7 +3074,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             except Exception as _silent_e:
                 logger.debug("suppressed: %s", _silent_e, exc_info=False)
 
-            # audit-fix(#1)：阈值默认引用单点常量（0.55 → COMPRESS_THRESHOLD=0.85）；
+            # audit-fix(#1)：阈值默认引用单点常量 COMPRESS_THRESHOLD；
             # settings.context_threshold_percent 覆盖机制保留
             from backend.agent.context_engine import (
                 COMPRESS_THRESHOLD,
@@ -3083,7 +3085,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 getattr(settings, "context_threshold_percent", COMPRESS_THRESHOLD)
                 or COMPRESS_THRESHOLD
             )
-            # 超长会话更早压（深度阈值 0.45 → COMPRESS_THRESHOLD_DEEP=0.75）
+            # 超长会话更早压（深度阈值 COMPRESS_THRESHOLD_DEEP）
             if len(messages) >= int(
                 getattr(settings, "context_max_messages_soft", 48) or 48
             ):

@@ -188,7 +188,7 @@ class PipelineContextEngine(ContextEngine):
         self.profile = profile
         family = None
         l1_default = 12_000
-        # audit-fix(#1)：默认阈值引用单点常量（0.72 → COMPRESS_THRESHOLD=0.85）；
+        # audit-fix(#1)：默认阈值引用单点常量 COMPRESS_THRESHOLD；
         # settings.context_threshold_percent / profile.l3_threshold_ratio 覆盖机制不变
         from backend.agent.context_engine import COMPRESS_THRESHOLD
 

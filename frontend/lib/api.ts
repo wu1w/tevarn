@@ -230,9 +230,13 @@ api.interceptors.response.use(
     ) {
       _isLoggingOut = true;
       clearPersistedAuth();
-      // 延迟重置标志，避免并发401重复触发
       setTimeout(() => { _isLoggingOut = false; }, 1000);
-      window.location.href = '/login';
+      const here = `${window.location.pathname}${window.location.search || ''}`;
+      if (!here.startsWith('/login')) {
+        const q = new URLSearchParams();
+        q.set('redirect', here || '/chat');
+        window.location.assign(`/login?${q.toString()}`);
+      }
       return Promise.reject(error);
     }
 

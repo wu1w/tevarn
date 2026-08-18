@@ -469,6 +469,7 @@ export interface MCPServerFormData {
 
 export type WSMessageType =
   | 'slash_result'
+  | 'session_deleted'
   | 'stream_delta'
   | 'content_reset'
   | 'status'
@@ -489,8 +490,7 @@ export type WSMessageType =
   | 'screenshot'
   | 'user_message_ack'
   | 'user_input_ignored'
-  | 'confirm_expired'
-  | 'slash_result';
+  | 'confirm_expired';
 
 export interface WSMessage {
   type: WSMessageType;

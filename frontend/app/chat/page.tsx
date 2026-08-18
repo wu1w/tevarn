@@ -130,7 +130,7 @@ function ChatPageInner() {
   const searchParams = useSearchParams();
   const contactIdentity = (searchParams.get('identity') || '').trim();
   const projectGroupId = (searchParams.get('group') || '').trim();
-  const { currentSession, messages, addMessage, createAndLoadSession, openContactSession, loadMessages, switchSession } = useSession();
+  const { currentSession, messages, addMessage, createAndLoadSession, openContactSession, loadMessages, switchSession, error: sessionLoadError } = useSession();
   const reconcileMessage = useSessionStore((s) => s.reconcileMessage);
     // token 由 AppShell GlobalChatWs 使用；chat 页不再直接连 WS
     const {
@@ -177,6 +177,16 @@ function ChatPageInner() {
           else delete stoppingBySessionRef.current[sid];
           const cur = useSessionStore.getState().currentSession?.id;
           if (cur === sid) setIsStopping(v);
+        }, []);
+        /** 本地已强制收束：忽略 late delta，避免「停了又活」 */
+        const locallyStoppedRef = useRef<Set<string>>(new Set());
+        const streamFlushTimerRef = useRef<number | null>(null);
+        React.useEffect(() => {
+          return () => {
+            if (streamFlushTimerRef.current != null) {
+              window.clearTimeout(streamFlushTimerRef.current);
+            }
+          };
         }, []);
         /** 流式活动时间戳：长时间无 delta 则视为卡住，露出恢复入口 */
         const lastStreamActivityRef = useRef<number>(0);
@@ -514,31 +524,35 @@ function ChatPageInner() {
 
   const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
       const sid = currentSession?.id || '';
-      if (isStoppingSid(sid)) return; // 仅丢弃「本会话」停止中的 late delta
-      setIsStreaming(true);
+      if (isStoppingSid(sid)) return;
+      if (sid && locallyStoppedRef.current.has(sid)) return;
       lastStreamActivityRef.current = Date.now();
       setStreamStuck(false);
-      setStreamingContent((prev) => {
-        const mid = msg.message_id || '';
-        const store = streamSessionApi();
-        const prevMid = sid ? store.get(sid).streamMessageId : null;
-        let next: string;
-        if (mid && prevMid && mid !== prevMid && (msg.content || '').length > 0) {
-          next = msg.content || '';
-        } else {
-          next = prev + (msg.content || '');
-        }
-        streamingContentRef.current = next;
-        if (sid) {
-          store.patch(sid, {
-            isStreaming: true,
-            agentRunning: true,
-            content: next,
-            streamMessageId: mid || prevMid,
-          });
-        }
-        return next;
-      });
+      const mid = msg.message_id || '';
+      const store = streamSessionApi();
+      const prevMid = sid ? store.get(sid).streamMessageId : null;
+      let next: string;
+      const prev = streamingContentRef.current;
+      if (mid && prevMid && mid !== prevMid && (msg.content || '').length > 0) {
+        next = msg.content || '';
+      } else {
+        next = prev + (msg.content || '');
+      }
+      streamingContentRef.current = next;
+      if (sid) {
+        store.patch(sid, {
+          isStreaming: true,
+          agentRunning: true,
+          content: next,
+          streamMessageId: mid || prevMid,
+        });
+      }
+      if (streamFlushTimerRef.current != null) return;
+      streamFlushTimerRef.current = window.setTimeout(() => {
+        streamFlushTimerRef.current = null;
+        setIsStreaming(true);
+        setStreamingContent(streamingContentRef.current);
+      }, 50);
     }, [currentSession?.id, isStoppingSid]);
 
     /** 伪 tool 回收：用后端清洗后的 content 替换已流式气泡 */
@@ -651,8 +665,10 @@ function ChatPageInner() {
             JSON.stringify(args);
           appendAgentOutput(`$ ${cmdline}`, 'in');
         } else if (msg.result) {
+          const raw = String(msg.result);
+          const clipped = raw.length > 12000;
           appendAgentOutput(
-            String(msg.result).slice(0, 12000),
+            clipped ? `${raw.slice(0, 12000)}\n…[output truncated]` : raw,
             msg.status === 'failed' ? 'err' : 'out'
           );
         }
@@ -667,8 +683,8 @@ function ChatPageInner() {
         const now = Date.now();
         const soft = /connection error|not connected|reconnect|slow retry/i.test(msg)
           && !/Invalid|creation failed|Unknown/i.test(msg);
-        // 软断线：状态行持续提示，toast 放宽到 12s 节流（原 4s 几乎无反馈）
-        if (soft && !opts?.force) {
+        const strategyNote = /slow retry/i.test(msg);
+        if (soft && !opts?.force && !strategyNote) {
           setStreamStatusDetail(t('chat.reconnecting') || '连接中断，正在重连…');
           if (now - lastWsToastAtRef.current < 12_000) return;
         } else if (!opts?.force && now - lastWsToastAtRef.current < 4000) {
@@ -1181,6 +1197,16 @@ const handleUserMessageAck = useCallback(
       onRunEvent: handleRunEvent,
       onGoalUpdate: handleGoalUpdate,
       onError: (err) => toastWsError(err),
+      onSessionDeleted: (sid) => {
+        addToast(t('chat.sessionDeleted') || '会话已删除', 'info');
+        try {
+          window.dispatchEvent(
+            new CustomEvent('tevarn:session-invalid', { detail: { sessionId: sid } }),
+          );
+        } catch {
+          /* ignore */
+        }
+      },
       getLastMessageId: getLast,
     });
     // 回 /chat：连接已在、handler 刚挂上 → 主动 sync 一次，补切页期间丢的 delta。
@@ -1349,23 +1375,22 @@ const handleUserMessageAck = useCallback(
         mode: ChatMode = 'default',
         subAgentIds?: string[],
         control?: 'steer' | 'queue' | 'interrupt'
-      ) => {
-        // 防连点/连 Enter：父级 isStreaming 尚未置位时的竞态；停止态按会话
+      ): Promise<boolean> => {
         const stopCheckSid = currentSession?.id || '';
-        if (sendInFlightRef.current || isStoppingSid(stopCheckSid)) return;
+        if (sendInFlightRef.current || isStoppingSid(stopCheckSid)) return false;
         sendInFlightRef.current = true;
 
         // D10 专业模式：强制项目文件夹
         if (useWorkspaceStore.getState().uiMode === 'pro' && !useWorkspaceStore.getState().root) {
           useWorkspaceStore.getState().setForceProjectOpen(true);
           sendInFlightRef.current = false;
-          return;
+          return false;
         }
 
         if (mode === 'cluster' && (!subAgentIds || subAgentIds.length === 0)) {
           addToast(t('chat.clusterNeedAgent'), 'error');
           sendInFlightRef.current = false;
-          return;
+          return false;
         }
 
         let session = currentSession;
@@ -1377,14 +1402,14 @@ const handleUserMessageAck = useCallback(
             console.error(t('page._e1'), e);
             addToast(t('chat.createSessionFailed'), 'error');
             sendInFlightRef.current = false;
-            return;
+            return false;
           } finally {
             setCreatingSession(false);
           }
           if (!session) {
             addToast(t('chat.createSessionFailed2'), 'error');
             sendInFlightRef.current = false;
-            return;
+            return false;
           }
         }
 
@@ -1398,7 +1423,7 @@ const handleUserMessageAck = useCallback(
         if ((attachments?.length || 0) > 0 && sendableAtts.length === 0 && !content.trim()) {
           addToast(t('chat.removeFailedAttachments'), 'error');
           sendInFlightRef.current = false;
-          return;
+          return false;
         }
 
         // 乐观气泡与后端 _build_user_input_with_attachments 对齐，便于 ack reconcile
@@ -1438,6 +1463,7 @@ const handleUserMessageAck = useCallback(
         };
         addMessage(userMsg);
         useSessionStore.getState().touchSessionActivity(session.id);
+        locallyStoppedRef.current.delete(session.id);
         setStoppingSid(session.id, false);
         // steer/queue 不打断当前 streaming 状态机
         if (!control || control === 'interrupt') {
@@ -1470,18 +1496,24 @@ const handleUserMessageAck = useCallback(
         try {
           const ready = await waitForConnection(session.id, 15000);
           if (!ready) {
-            addToast(t('chat.channelNotConnected'), 'error');
+            addToast(
+              kickedByPeer
+                ? (t('chat.wsKickedInputDisabled') || t('chat.wsKickedByPeer'))
+                : t('chat.channelNotConnected'),
+              'error',
+            );
             dropGhost();
-            return;
+            return false;
           }
 
           setStreamStatusDetail(mode === 'cluster' ? t('chat.clusterWorking') : t('chat.thinking'));
-          // 只发可发送附件，避免把失败 chip 带进 WS
           const sent = sendMessage(content, sendableAtts, mode, subAgentIds, control ? { control } : undefined);
           if (!sent) {
             addToast(t('chat.sendFailedDisconnected'), 'error');
             dropGhost();
+            return false;
           }
+          return true;
         } finally {
           // streaming 已 true 时由 MessageInput disabled 挡二次发送；此处放行以便失败后可重发
           window.setTimeout(() => {
@@ -1499,6 +1531,7 @@ const handleUserMessageAck = useCallback(
         t,
         isStoppingSid,
         setStoppingSid,
+        kickedByPeer,
       ]
     );
 
@@ -1655,6 +1688,7 @@ const handleUserMessageAck = useCallback(
       // 兜底：8s 仍无 idle 则强制收束——仅影响发起 stop 的 sid，且仅当仍在看该会话时改 UI
       window.setTimeout(() => {
         if (!isStoppingSid(sid)) return;
+        locallyStoppedRef.current.add(sid);
         const leftover = streamingContentRef.current || '';
         setStoppingSid(sid, false);
         streamSessionApi().markIdle(sid);
@@ -2054,6 +2088,18 @@ const handleUserMessageAck = useCallback(
                         </div>
                       ) : (
                       <div className="chat-messages-pane">
+                        {sessionLoadError && currentSession ? (
+                          <div className="flex items-center justify-between gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                            <span>{t('chat.historyLoadFailed')}</span>
+                            <button
+                              type="button"
+                              className="rounded border border-amber-500/40 px-2 py-0.5 hover:bg-amber-500/20"
+                              onClick={() => void loadMessages(currentSession.id)}
+                            >
+                              {t('chat.retryLoad')}
+                            </button>
+                          </div>
+                        ) : null}
                                                 <ChatWindow
                           messages={displayMessages}
                           isStreaming={isStreaming}

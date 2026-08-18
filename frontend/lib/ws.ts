@@ -47,6 +47,10 @@ export function isScreenshot(msg: WSMessage): msg is ScreenshotMessage {
   return msg.type === 'screenshot';
 }
 
+export function isSessionDeleted(msg: WSMessage): boolean {
+  return msg.type === 'session_deleted';
+}
+
 export function createUserInputMessage(
   content: string,
   attachments?: Array<{ filename: string; url: string; type: string; text_content?: string }>,

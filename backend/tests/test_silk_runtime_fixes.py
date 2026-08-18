@@ -39,6 +39,9 @@ def test_locale_has_streaming_action_keys():
         "chat.loadingOlder",
         "chat.loadOlder",
         "chat.historyStart",
+        "chat.sessionDeleted",
+        "chat.historyLoadFailed",
+        "chat.retryLoad",
         "chat.duplicateIgnored",
         "chat.toolsMenu",
         "chat.moreActions",
@@ -349,10 +352,20 @@ def test_tevarn_live_product_ids_not_takton():
 
     ws = (ROOT / "frontend" / "hooks" / "useWebSocket.ts").read_text(encoding="utf-8")
     assert "user_input_ignored" in ws
+    assert "4004" in ws
+    assert "sessionGoneRef" in ws
+    assert "isSessionDeleted" in ws
+
+    cron = (
+        ROOT / "frontend" / "components" / "cron-webhook" / "CronWebhookPanel.tsx"
+    ).read_text(encoding="utf-8")
+    assert "window.confirm" not in cron
+    assert "{ConfirmDialogComponent}" in cron
 
     inp = (ROOT / "frontend" / "components" / "chat" / "MessageInput.tsx").read_text(
         encoding="utf-8"
     )
+    assert "ok === false" in inp
     assert "else if (!isStreaming)" not in inp
     assert "IconMore" in inp
     assert "chat.toolsMenu" in inp

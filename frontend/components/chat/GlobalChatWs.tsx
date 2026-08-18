@@ -67,6 +67,16 @@ export function GlobalChatWs() {
     onError: (err: string) => {
       chatWsHandlers().onError?.(err);
     },
+    onSessionDeleted: (sid: string) => {
+      chatWsHandlers().onSessionDeleted?.(sid);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('tevarn:session-invalid', { detail: { sessionId: sid } }),
+        );
+      } catch {
+        /* ignore */
+      }
+    },
     getLastMessageId: () => chatWsHandlers().getLastMessageId?.(),
     onSettingsChanged: (keys) => {
       if (typeof window !== 'undefined') {

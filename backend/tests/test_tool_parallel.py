@@ -34,6 +34,7 @@ class _Loop:
 
     user_id = None
     ws_manager = None
+    _should_stop = False
 
     def __init__(self, delay=0.05, fail=None):
         self.delay = delay
@@ -231,3 +232,42 @@ async def test_results_key_by_tool_call_id_not_name(registry):
     ]
     out = await _prefetch(loop, calls)
     assert set(out) == {"id1", "id2", "id3"}
+
+
+@pytest.mark.asyncio
+async def test_prefetch_skips_when_already_stopped(registry):
+    registry["file_read"] = _Tool(ToolRiskLevel.SAFE)
+    registry["grep"] = _Tool(ToolRiskLevel.SAFE)
+    loop = _Loop()
+    loop._should_stop = True
+    out = await _prefetch(loop, [_Call("a", "file_read"), _Call("b", "grep")])
+    assert out == {}
+    assert loop.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prefetch_stop_cancels_pending(registry):
+    registry["file_read"] = _Tool(ToolRiskLevel.SAFE)
+    registry["grep"] = _Tool(ToolRiskLevel.SAFE)
+    loop = _Loop(delay=0.5)
+
+    async def _flip():
+        await asyncio.sleep(0.05)
+        loop._should_stop = True
+
+    asyncio.create_task(_flip())
+    import time as _time
+
+    t0 = _time.monotonic()
+    out = await _prefetch(loop, [_Call("a", "file_read"), _Call("b", "grep")])
+    elapsed = _time.monotonic() - t0
+    assert elapsed < 0.4, f"stop should cancel pending tools, took {elapsed:.3f}s"
+    assert out
+    assert all(
+        item[1] is None
+        and (
+            item[0] in ("result::file_read", "result::grep")
+            or "Cancelled" in str(item[0])
+        )
+        for item in out.values()
+    )

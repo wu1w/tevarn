@@ -35,7 +35,7 @@ async def compress_history_if_needed(
     messages: list[dict[str, Any]],
     *,
     session_id: uuid.UUID | None = None,
-    threshold: float = COMPRESS_THRESHOLD,  # audit-fix(#1)：0.75 → 单点常量 0.85
+    threshold: float = COMPRESS_THRESHOLD,  # 单点常量 COMPRESS_THRESHOLD
     allow_l5: bool = True,
     micro_only: bool = False,
     aggressive_hard_drop: bool = True,
@@ -95,7 +95,7 @@ async def compress_history_if_needed(
     if count_pressure and not micro_only:
         # 长会话优先允许 L5；硬上限时强制 allow
         allow_l5 = True
-        # audit-fix(#1)：深度阈值 0.45 → 单点常量 COMPRESS_THRESHOLD_DEEP(0.75)
+        # audit-fix(#1)：深度阈值 COMPRESS_THRESHOLD_DEEP
         thr = min(thr, COMPRESS_THRESHOLD_DEEP)
         local_meter = TokenMeter(context_window=window, threshold_percent=thr)
         meta_base["count_pressure"] = True
