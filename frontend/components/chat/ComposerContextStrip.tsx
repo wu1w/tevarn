@@ -16,6 +16,7 @@ const STATUS_COLOR: Record<string, string> = {
   running: 'text-brand-cyan',
   completed: 'text-status-online',
   failed: 'text-status-offline',
+  cancelled: 'text-foreground-dim',
 };
 
 export function ComposerContextStrip({

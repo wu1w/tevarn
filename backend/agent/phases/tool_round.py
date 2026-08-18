@@ -83,6 +83,39 @@ def _risk_name(tool: Any) -> str:
     return str(getattr(rl, "value", rl) or "").lower()
 
 
+def _stop_skips_remaining_tool(loop: Any, tc: Any, capped: dict[str, str]) -> bool:
+    """User Stop wins over prefetch cache. Policy-capped results still report."""
+    if not getattr(loop, "_should_stop", False):
+        return False
+    cid = str(getattr(tc, "id", "") or "")
+    return cid not in capped
+
+
+async def _run_tool_cancellable(loop: Any, coro: Any, timeout: float) -> Any:
+    """Run one tool; cancel the in-flight call when the user hits Stop."""
+    task = asyncio.ensure_future(coro)
+
+    async def _watch_stop() -> None:
+        while not getattr(loop, "_should_stop", False):
+            if task.done():
+                return
+            await asyncio.sleep(0.1)
+        if not task.done():
+            task.cancel()
+
+    watcher = asyncio.create_task(_watch_stop())
+    try:
+        if timeout > 0:
+            return await _await_with_timeout_cleanup(task, timeout)
+        return await task
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
 async def _await_with_timeout_cleanup(coro: Any, timeout: float) -> Any:
     """wait_for 超时后显式 cancel + await 清理（L2-H1）。
 
@@ -792,7 +825,7 @@ async def run_tool_round(
 
     # 执行每个 tool call
     for tc in tool_calls:
-        if getattr(loop, "_should_stop", False) and str(getattr(tc, "id", "") or "") not in _capped_results and getattr(tc, "id", None) not in prefetched:
+        if _stop_skips_remaining_tool(loop, tc, _capped_results):
             _cancel = "[Cancelled] stopped by user"
             _args = tc.arguments if isinstance(tc.arguments, dict) else {}
             if not isinstance(_args, dict):
@@ -951,13 +984,11 @@ async def run_tool_round(
                             "timeout",
                             max(15, int(min(90, _tool_timeout - 5))),
                         )
-                if _tool_timeout > 0:
-                    tool_result = await _await_with_timeout_cleanup(
-                        loop._execute_registered_tool(tc.name, validated_args),
-                        _tool_timeout,
-                    )
-                else:
-                    tool_result = await loop._execute_registered_tool(tc.name, validated_args)
+                tool_result = await _run_tool_cancellable(
+                    loop,
+                    loop._execute_registered_tool(tc.name, validated_args),
+                    _tool_timeout,
+                )
                 query = (
                     tc.arguments.get("query", "")
                     if tc.name == "search_knowledge_base"
@@ -993,7 +1024,9 @@ async def run_tool_round(
                     if _gate_err:
                         tool_result = _gate_err
                     else:
-                        tool_result = await skill.execute(**validated_args)
+                        tool_result = await _run_tool_cancellable(
+                            loop, skill.execute(**validated_args), 0
+                        )
                     query = ""
                 else:
                     # 尝试执行数据库中的自定义 Skill / Tool
@@ -1021,8 +1054,10 @@ async def run_tool_round(
                         db_tool = await tool_repo.get_tool_by_name(tc.name)
                         if db_tool is not None and db_tool.enabled:
                             # 走 Registry（内含 tool_gate）；参数用 validated 而非裸 tc.arguments
-                            tool_result = await UnifiedToolRegistry.execute(
-                                tc.name, validated_args
+                            tool_result = await _run_tool_cancellable(
+                                loop,
+                                UnifiedToolRegistry.execute(tc.name, validated_args),
+                                0,
                             )
                             query = ""
                         else:
@@ -1037,7 +1072,9 @@ async def run_tool_round(
                                 tool_result = _gate_err
                             else:
                                 try:
-                                    tool_result = await dynamic.execute(**validated_args)
+                                    tool_result = await _run_tool_cancellable(
+                                        loop, dynamic.execute(**validated_args), 0
+                                    )
                                 except Exception as _de:
                                     tool_result = (
                                         f"[Error] Tool '{tc.name}' not found or disabled "
@@ -1192,6 +1229,33 @@ async def run_tool_round(
                 await asyncio.sleep(0)
             except Exception:
                 pass
+        except asyncio.CancelledError:
+            tool_result = "[Cancelled] stopped by user"
+            query = ""
+            logger.info("Tool %s cancelled by user stop", tc.name)
+            try:
+                await loop._push_tool_event(
+                    session_id,
+                    phase="end",
+                    tool_call_id=tc.id,
+                    name=tc.name,
+                    arguments=args_dict if isinstance(args_dict, dict) else {},
+                    status="failed",
+                    result=tool_result,
+                    duration_ms=(_time.monotonic() - _tc_t0) * 1000,
+                )
+            except Exception:
+                pass
+            if task_id is not None:
+                try:
+                    await loop._push_task_update(
+                        session_id, task_id, 0, "failed", tool_result[:200]
+                    )
+                except Exception:
+                    pass
+            if not getattr(loop, "_should_stop", False):
+                raise
+
         except asyncio.TimeoutError:
             _to = float(getattr(settings, "agent_tool_timeout_seconds", 180) or 180)
             tool_result = f"[Error] Tool '{tc.name}' timed out after {_to:.0f}s"

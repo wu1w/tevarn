@@ -20,7 +20,9 @@ export function useColResize(opts: {
   const [width, setWidth] = useState(defaultWidth);
   const drag = useRef({ startX: 0, startW: defaultWidth, active: false });
   const widthRef = useRef(width);
-  widthRef.current = width;
+  useEffect(() => {
+    widthRef.current = width;
+  }, [width]);
 
   const resolveMax = useCallback(() => {
     const hi = typeof max === 'function' ? max() : max;

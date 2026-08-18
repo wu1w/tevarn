@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from backend.agent.exit_reasons import format_exit_user_message
 from backend.agent.thinking_format import ensure_user_facing_final
@@ -85,10 +84,33 @@ def test_ws_stop_status_is_user_facing():
 def test_chat_page_keeps_stop_partial():
     src = (ROOT / "frontend" / "app" / "chat" / "page.tsx").read_text(encoding="utf-8")
     assert "keepPartialAssistantOnIdle" in src
+    assert "snapshotStoppedTools" in src
+    assert "clearDeletedSessionLocalState" in src
     assert "_${streamStatusDetail}_" not in src
     assert "mapStreamStatusDetail" in src
     assert "if (leftover && !wasStopping)" not in src
-    assert src.count("keepPartialAssistantOnIdle") >= 3
+    assert src.count("keepPartialAssistantOnIdle") >= 4
+    # sync_response idle must keep the partial, not wipe-then-load
+    sync_fn = src.split("const handleSyncResponse", 1)[1].split(
+        "const handleUserMessageAck", 1
+    )[0]
+    assert "keepPartialAssistantOnIdle" in sync_fn
+    assert "snapshotStoppedTools" in sync_fn
+
+
+def test_chat_page_stop_does_not_fake_complete_tools():
+    src = (ROOT / "frontend" / "app" / "chat" / "page.tsx").read_text(encoding="utf-8")
+    assert 'status: \'completed\' as const' not in src
+    assert "snapshotStoppedTools" in src
+    panel = (ROOT / "frontend" / "components" / "chat" / "ToolCallPanel.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "cancelled" in panel
+    cleanup = (
+        ROOT / "frontend" / "lib" / "sessionLocalCleanup.ts"
+    ).read_text(encoding="utf-8")
+    assert "tevarn-chat-draft:" in cleanup
+    assert "streamSessionApi().clear" in cleanup
 
 
 def test_no_tool_round_no_english_stopped():

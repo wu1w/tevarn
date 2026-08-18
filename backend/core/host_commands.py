@@ -225,3 +225,56 @@ def build_process_env(
         if "PATH" in (extra or {}):
             env["PATH"] = enrich_path(str(extra.get("PATH") or ""))
     return env
+
+
+# Control-plane secrets injected into the FastAPI process. Agent python/command
+# children must not inherit them. User-intended env (PATH, HOME, provider keys)
+# is kept so local tools keep working — silent strip, no confirm.
+_CONTROL_PLANE_ENV_KEYS = frozenset(
+    {
+        "TEVARN_JWT_SECRET",
+        "TEVARN_SECRET_KEY",
+        "JWT_SECRET",
+        "TEVARN_API_KEY",
+        "TEVARN_DEFAULT_ADMIN_PASSWORD",
+        "TEVARN_DESKTOP_PERMISSION_SECRET",
+        "TEVARN_SETTINGS_ENCRYPTION_SALT",
+        "TEVARN_SETTINGS_ENCRYPTION_KEY",
+        "TEVARN_KERNEL_RPC_SECRET",
+        "TEVARN_TOKEN_HMAC_SECRET",
+        "TEVARN_BRIDGE_TOKEN",
+    }
+)
+
+
+def is_control_plane_env_key(key: str) -> bool:
+    k = (key or "").strip().upper()
+    if not k:
+        return False
+    if k in _CONTROL_PLANE_ENV_KEYS:
+        return True
+    if k.startswith("TEVARN_") and any(
+        token in k for token in ("SECRET", "PASSWORD", "HMAC", "ENCRYPTION")
+    ):
+        return True
+    return False
+
+
+def tool_spawn_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Host env minus product secrets. PATH / HOME / user env stay intact."""
+    env: dict[str, str] = {}
+    for k, v in os.environ.items():
+        if v is None or is_control_plane_env_key(str(k)):
+            continue
+        env[str(k)] = str(v)
+    if extra:
+        for k, v in extra.items():
+            if v is None or is_control_plane_env_key(str(k)):
+                continue
+            env[str(k)] = str(v)
+    if "PATH" not in env:
+        env["PATH"] = os.environ.get("PATH", "")
+    home = os.environ.get("HOME")
+    if home and "HOME" not in env:
+        env["HOME"] = home
+    return env
