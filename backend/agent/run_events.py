@@ -7,6 +7,7 @@ This prevents multi-worker / multi-process duplicate seqs.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -256,7 +257,7 @@ async def emit_run_event(
         msg_base["generation"] = int(generation)
         msg_base["run_generation"] = int(generation)
 
-    seq, msg = _atomic_emit(sid, event, msg_base)
+    seq, msg = await asyncio.to_thread(_atomic_emit, sid, event, msg_base)
 
     if ws_manager is None:
         return seq

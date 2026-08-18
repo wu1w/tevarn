@@ -85,10 +85,29 @@ def test_ws_stop_status_is_user_facing():
 def test_chat_page_keeps_stop_partial():
     src = (ROOT / "frontend" / "app" / "chat" / "page.tsx").read_text(encoding="utf-8")
     assert "keepPartialAssistantOnIdle" in src
+    assert "snapshotStoppedTools" in src
+    assert "clearDeletedSessionLocalState" in src
     assert "_${streamStatusDetail}_" not in src
     assert "mapStreamStatusDetail" in src
     assert "if (leftover && !wasStopping)" not in src
-    assert src.count("keepPartialAssistantOnIdle") >= 3
+    assert src.count("keepPartialAssistantOnIdle") >= 4
+    # sync_response idle must keep the partial, not wipe-then-load
+    assert "keepPartialAssistantOnIdle" in src.split("payload.agent_running")[1]
+
+
+def test_chat_page_stop_does_not_fake_complete_tools():
+    src = (ROOT / "frontend" / "app" / "chat" / "page.tsx").read_text(encoding="utf-8")
+    assert 'status: \'completed\' as const' not in src
+    assert "snapshotStoppedTools" in src
+    panel = (ROOT / "frontend" / "components" / "chat" / "ToolCallPanel.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "cancelled" in panel
+    cleanup = (
+        ROOT / "frontend" / "lib" / "sessionLocalCleanup.ts"
+    ).read_text(encoding="utf-8")
+    assert "tevarn-chat-draft:" in cleanup
+    assert "streamSessionApi().clear" in cleanup
 
 
 def test_no_tool_round_no_english_stopped():

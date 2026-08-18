@@ -134,11 +134,15 @@ function MessageBubbleInner({
       const status: ToolCallData['status'] =
         dtc.status === 'failed'
           ? 'failed'
-          : dtc.status === 'completed' || hasResult
-            ? 'completed'
-            : streaming
-              ? 'running'
-              : 'completed';
+          : dtc.status === 'cancelled'
+            ? 'cancelled'
+            : dtc.status === 'completed' || (hasResult && !String(dtc.result || '').startsWith('[Cancelled]'))
+              ? 'completed'
+              : String(dtc.result || '').startsWith('[Cancelled]')
+                ? 'cancelled'
+                : streaming
+                  ? 'running'
+                  : 'cancelled';
       return {
         id: dtc.id,
         name: dtc.name,

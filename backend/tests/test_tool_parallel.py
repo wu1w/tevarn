@@ -12,7 +12,11 @@ import uuid
 
 import pytest
 
-from backend.agent.phases.tool_round import _prefetch_readonly_calls
+from backend.agent.phases.tool_round import (
+    _prefetch_readonly_calls,
+    _run_tool_cancellable,
+    _stop_skips_remaining_tool,
+)
 from backend.tools.base import ToolRiskLevel
 
 
@@ -271,3 +275,42 @@ async def test_prefetch_stop_cancels_pending(registry):
         )
         for item in out.values()
     )
+
+
+def test_stop_skips_prefetched_but_keeps_capped():
+    loop = _Loop()
+    loop._should_stop = True
+    tc = _Call("pref-1", "file_read")
+    assert _stop_skips_remaining_tool(loop, tc, {})
+    assert not _stop_skips_remaining_tool(loop, tc, {"pref-1": "[Blocked]"})
+    loop._should_stop = False
+    assert not _stop_skips_remaining_tool(loop, tc, {})
+
+
+@pytest.mark.asyncio
+async def test_serial_tool_cancels_on_stop():
+    loop = _Loop()
+    started = asyncio.Event()
+
+    async def slow():
+        started.set()
+        await asyncio.sleep(2)
+        return "done"
+
+    async def flip():
+        await started.wait()
+        loop._should_stop = True
+
+    asyncio.create_task(flip())
+    with pytest.raises(asyncio.CancelledError):
+        await _run_tool_cancellable(loop, slow(), timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_serial_tool_returns_when_not_stopped():
+    loop = _Loop()
+
+    async def quick():
+        return "ok"
+
+    assert await _run_tool_cancellable(loop, quick(), timeout=2) == "ok"

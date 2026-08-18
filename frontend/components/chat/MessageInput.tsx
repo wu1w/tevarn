@@ -29,6 +29,7 @@ import { useT } from '@/stores/localeStore';
 import { useToastStore } from '@/stores/toastStore';
 import type { SubAgent } from '@/types/subagent';
 import type { Device } from '@/types';
+import { chatDraftKey } from '@/lib/sessionLocalCleanup';
 
 export interface Attachment {
   filename: string;
@@ -143,9 +144,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const isEditing = !!initialContent;
   const inputLocked = disabled || uploading;
   const clusterOn = activeModes.has('cluster');
-  // audit-fix: 草稿按会话隔离，避免切会话后草稿串台；
+  // 草稿按会话隔离，避免切会话后草稿串台；
   // 旧全局 key 'tevarn-chat-draft' 不再读取（按清单约定不迁移）
-  const draftKey = `tevarn-chat-draft:${sessionId || 'default'}`;
+  const draftKey = chatDraftKey(sessionId);
 
   useEffect(() => {
     if (isEditing) return;

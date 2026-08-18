@@ -390,7 +390,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             await self._push_status(
                 session_id,
                 "thinking",
-                f"正在等待继续…",
+                "正在等待继续…",
             )
             logger.info("kernel 进程挂起等待 proc=%s reason=%s", proc.id, reason)
             def _refresh_from_shared(p):
@@ -3474,7 +3474,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     await self._push_status(
                         session_id,
                         "thinking",
-                        f"步数已用完，正在给出答复…",
+                        "步数已用完，正在给出答复…",
                     )
                     logger.info(
                         "Iteration budget grace session=%s used=%s",

@@ -48,8 +48,9 @@ class LocalImageService(ImageGenerationService):
             "n": min(n, 4),
             "size": f"{width}x{height}",
         }
+        timeout = aiohttp.ClientTimeout(total=120, connect=10)
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, json=payload, headers=self._get_headers()) as resp:
                     resp.raise_for_status()
                     data = await resp.json()

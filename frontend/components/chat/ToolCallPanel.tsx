@@ -12,7 +12,7 @@ export interface ToolCallData {
   arguments: Record<string, unknown>;
   result?: string;
   duration_ms?: number;
-  status?: 'running' | 'completed' | 'failed';
+  status?: 'running' | 'completed' | 'failed' | 'cancelled';
 }
 
 interface ToolCallPanelProps {
@@ -25,13 +25,16 @@ interface ToolCallPanelProps {
 export function resolveToolCallStatus(
   tc: Pick<ToolCallData, 'status' | 'result'>,
   pending: boolean,
-): 'running' | 'completed' | 'failed' {
+): 'running' | 'completed' | 'failed' | 'cancelled' {
   if (tc.status === 'failed') return 'failed';
-  // 有结果 → 完成
-  if (tc.result !== undefined && tc.result !== null) return 'completed';
+  if (tc.status === 'cancelled') return 'cancelled';
+  if (tc.result !== undefined && tc.result !== null) {
+    if (String(tc.result).startsWith('[Cancelled]')) return 'cancelled';
+    return 'completed';
+  }
   if (tc.status === 'completed') return 'completed';
-  // 对话已结束：禁止「运行中」卡死（结果往往在独立 tool 消息里）
-  if (!pending) return 'completed';
+  // 对话已结束且无结果：interrupted, not a fake success
+  if (!pending) return tc.status === 'running' ? 'cancelled' : 'completed';
   return 'running';
 }
 
@@ -47,6 +50,9 @@ export function ToolCallPanel({ toolCalls, pending = false }: ToolCallPanelProps
   const failedCount = toolCalls.filter(
     (tc) => resolveToolCallStatus(tc, pending) === 'failed',
   ).length;
+  const cancelledCount = toolCalls.filter(
+    (tc) => resolveToolCallStatus(tc, pending) === 'cancelled',
+  ).length;
   const [open, setOpen] = useState(false);
 
   // 有工具开始运行时自动展开一次；结束后保持用户折叠选择
@@ -61,7 +67,9 @@ export function ToolCallPanel({ toolCalls, pending = false }: ToolCallPanelProps
       ? ` · ${runningCount} 运行中`
       : failedCount > 0
         ? ` · ${failedCount} 失败`
-        : ` · 已完成`;
+        : cancelledCount > 0
+          ? ` · ${cancelledCount} 已取消`
+          : ` · 已完成`;
 
   return (
     <div className="tk-trace">
@@ -120,6 +128,7 @@ function TraceStep({
   const summary = useMemo(() => {
     if (hasResult) return summarizeToolResult(toolCall.result, toolCall.name);
     if (status === 'running') return '执行中…';
+    if (status === 'cancelled') return '已取消';
     if (status === 'completed' && !hasResult) return '已完成';
     if (hasArgs) {
       const keys = Object.keys(toolCall.arguments);
@@ -140,6 +149,8 @@ function TraceStep({
       <span className="ok">■</span>
     ) : status === 'failed' ? (
       <span className="fail">■</span>
+    ) : status === 'cancelled' ? (
+      <span style={{ color: 'var(--foreground-dim)' }}>■</span>
     ) : (
       <span style={{ color: 'var(--foreground-dim)' }}>■</span>
     );

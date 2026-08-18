@@ -170,6 +170,8 @@ export function useSession() {
         if (isContactSessionLocal(sessionId)) return false;
 
         await api.deleteSession(sessionId);
+        const { clearDeletedSessionLocalState } = await import('@/lib/sessionLocalCleanup');
+        clearDeletedSessionLocalState(sessionId);
         // 清理本地标题 / 星标
         const st = useSessionStore.getState();
         const { [sessionId]: _removed, ...restTitles } = st.sessionTitles;

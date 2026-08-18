@@ -6,7 +6,7 @@ import { t } from '@/stores/localeStore';
 
 export interface DisplayToolCall extends ToolCall {
   result?: string;
-  status?: 'running' | 'completed' | 'failed';
+  status?: 'running' | 'completed' | 'failed' | 'cancelled';
 }
 
 export interface DisplayMessage extends Message {

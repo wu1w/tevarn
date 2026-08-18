@@ -188,6 +188,8 @@ export function ContactSessionPicker({
       try {
         // 用户显式删除：force 放行活跃/联系人保护
         await api.deleteSession(sessionId, true);
+        const { clearDeletedSessionLocalState } = await import('@/lib/sessionLocalCleanup');
+        clearDeletedSessionLocalState(sessionId);
 
         // 清理本地标题 / 星标 / lastSessionByContact
         const st = useSessionStore.getState();

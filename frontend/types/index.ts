@@ -78,7 +78,7 @@ export interface ToolCall {
   tool_call_id?: string;
   /** 展示层合并进来的执行结果 */
   result?: string;
-  status?: 'running' | 'completed' | 'failed';
+  status?: 'running' | 'completed' | 'failed' | 'cancelled';
 }
 
 // ====== Task ======

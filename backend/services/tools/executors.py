@@ -1336,7 +1336,12 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
             format_process,
         )
 
-        proc = await create_process(command, cwd=cwd if cwd else None)
+        from backend.core.host_commands import tool_spawn_env
+
+        _child_env = tool_spawn_env()
+        proc = await create_process(
+            command, cwd=cwd if cwd else None, env=_child_env
+        )
         mode = "shell" if needs_shell(command) else "exec"
         try:
             stdout_b, stderr_b = await asyncio.wait_for(
@@ -1411,9 +1416,13 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
                 m = re.search(r"(?i)\s-p\s+(\S+)", command or "")
                 if m:
                     clean = f"cargo clean -p {m.group(1)}"
-                proc2 = await create_process(clean, cwd=cwd if cwd else None)
+                proc2 = await create_process(
+                    clean, cwd=cwd if cwd else None, env=_child_env
+                )
                 await asyncio.wait_for(proc2.communicate(), timeout=min(float(timeout), 120.0))
-                proc3 = await create_process(command, cwd=cwd if cwd else None)
+                proc3 = await create_process(
+                    command, cwd=cwd if cwd else None, env=_child_env
+                )
                 o3, e3 = await asyncio.wait_for(
                     proc3.communicate(), timeout=float(timeout)
                 )
@@ -1790,14 +1799,16 @@ async def execute_file_write(config: dict[str, Any], arguments: dict[str, Any]) 
             f"(workspace={base_abs}). Use a relative path like 'docs/foo.md'."
         )
 
-    # 确保目录存在
     parent = os.path.dirname(full_path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
 
     try:
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        def _write() -> None:
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        await asyncio.to_thread(_write)
         return f"[Success] Written {len(content)} characters to {filepath}"
     except Exception as e:
         return f"[Error] {e}"
@@ -2062,7 +2073,11 @@ async def execute_python(config: dict[str, Any], arguments: dict[str, Any]) -> s
                 timeout_s = float(timeout or 30)
             except (TypeError, ValueError):
                 timeout_s = 30.0
-            proc = await create_process_exec(py, script_path)
+            from backend.core.host_commands import tool_spawn_env
+
+            proc = await create_process_exec(
+                py, script_path, env=tool_spawn_env()
+            )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout_s
             )
@@ -2287,48 +2302,50 @@ async def execute_edit(config: dict[str, Any], arguments: dict[str, Any]) -> str
         return f"[Error] Not a file: {filepath}"
 
     try:
-        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
+        def _edit() -> str:
+            with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
 
-        occurrences = content.count(old_text)
+            occurrences = content.count(old_text)
 
-        if occurrences == 0:
+            if occurrences == 0:
+                return (
+                    f"[Error] old_text not found in {filepath}. "
+                    f"Read the file first and copy the exact text, including indentation "
+                    f"and line breaks."
+                )
+
+            if occurrences > 1 and not replace_all:
+                first = content[: content.index(old_text)].count("\n") + 1
+                second_off = content.index(old_text, content.index(old_text) + 1)
+                second = content[:second_off].count("\n") + 1
+                return (
+                    f"[Error] old_text appears {occurrences} times in {filepath} "
+                    f"(first at line {first}, next at line {second}). "
+                    f"Include more surrounding lines to make it unique, "
+                    f"or pass replace_all=true to replace every occurrence."
+                )
+
+            line_no = content[: content.index(old_text)].count("\n") + 1
+            if replace_all:
+                new_content = content.replace(old_text, new_text)
+            else:
+                new_content = content.replace(old_text, new_text, 1)
+
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+
+            if replace_all and occurrences > 1:
+                return (
+                    f"[Success] Edited {filepath}: replaced all {occurrences} occurrences "
+                    f"(first at line {line_no}), {len(old_text)} -> {len(new_text)} chars each"
+                )
             return (
-                f"[Error] old_text not found in {filepath}. "
-                f"Read the file first and copy the exact text, including indentation "
-                f"and line breaks."
+                f"[Success] Edited {filepath}:{line_no} — "
+                f"replaced {len(old_text)} chars with {len(new_text)} chars"
             )
 
-        if occurrences > 1 and not replace_all:
-            # 定位前两处所在行号，帮模型判断该扩多少上下文
-            first = content[: content.index(old_text)].count("\n") + 1
-            second_off = content.index(old_text, content.index(old_text) + 1)
-            second = content[:second_off].count("\n") + 1
-            return (
-                f"[Error] old_text appears {occurrences} times in {filepath} "
-                f"(first at line {first}, next at line {second}). "
-                f"Include more surrounding lines to make it unique, "
-                f"or pass replace_all=true to replace every occurrence."
-            )
-
-        line_no = content[: content.index(old_text)].count("\n") + 1
-        if replace_all:
-            new_content = content.replace(old_text, new_text)
-        else:
-            new_content = content.replace(old_text, new_text, 1)
-
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-
-        if replace_all and occurrences > 1:
-            return (
-                f"[Success] Edited {filepath}: replaced all {occurrences} occurrences "
-                f"(first at line {line_no}), {len(old_text)} -> {len(new_text)} chars each"
-            )
-        return (
-            f"[Success] Edited {filepath}:{line_no} — "
-            f"replaced {len(old_text)} chars with {len(new_text)} chars"
-        )
+        return await asyncio.to_thread(_edit)
     except Exception as e:
         return f"[Error] {e}"
 

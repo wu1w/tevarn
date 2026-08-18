@@ -28,6 +28,7 @@ import { ContactSessionPicker } from '@/components/chat/ContactSessionPicker';
 import { useToastStore } from '@/stores/toastStore';
 import { useT } from '@/stores/localeStore';
 import { streamSessionApi } from '@/stores/streamSessionStore';
+import { clearDeletedSessionLocalState } from '@/lib/sessionLocalCleanup';
 import { openSessionTabChannel } from '@/lib/sessionTabChannel';
 import { useChatInspectorStore, type ChatInspectorTab } from '@/stores/chatInspectorStore';
 import { Eye, FolderOpen, ListTodo, ScanSearch, Terminal } from 'lucide-react';
@@ -86,14 +87,41 @@ function mapStreamStatusDetail(
   return raw;
 }
 
+function snapshotStoppedTools(tools: ToolCallData[]): ToolCallData[] {
+  return tools.map((t) => {
+    if (t.status === 'failed' || t.status === 'completed') return t;
+    if (t.status === 'cancelled') {
+      return {
+        ...t,
+        result: t.result || '[Cancelled] stopped by user',
+      };
+    }
+    return {
+      ...t,
+      status: 'cancelled' as const,
+      result: t.result || '[Cancelled] stopped by user',
+    };
+  });
+}
+
 function keepPartialAssistantOnIdle(
   sid: string,
   leftover: string,
   loadMessages: (id: string) => Promise<unknown>,
   addMessage: (m: Message) => void,
+  leftoverTools: ToolCallData[] = [],
 ) {
   const finish = () => {
-    if (!leftover.trim()) return;
+    const tools = leftoverTools.length
+      ? leftoverTools.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+          result: tc.result,
+          status: tc.status,
+        }))
+      : [];
+    if (!leftover.trim() && tools.length === 0) return;
     const msgs = useSessionStore.getState().messages || [];
     const lastA = [...msgs].reverse().find(
       (m) =>
@@ -102,16 +130,24 @@ function keepPartialAssistantOnIdle(
         !String(m.id || '').startsWith('optimistic:'),
     );
     const head = leftover.trim().slice(0, 80);
-    const have = lastA && String(lastA.content || '').includes(head);
-    if (!have) {
+    const haveText = leftover.trim()
+      ? lastA && String(lastA.content || '').includes(head)
+      : Boolean(lastA);
+    if (!haveText) {
       addMessage({
         id: generateUUID(),
         session_id: sid,
         role: 'assistant',
         content: leftover,
-        tool_calls: null,
+        tool_calls: tools.length ? (tools as Message['tool_calls']) : null,
         token_count: null,
         created_at: new Date().toISOString(),
+      });
+      return;
+    }
+    if (tools.length && lastA && !lastA.tool_calls?.length) {
+      useSessionStore.getState().updateMessage(lastA.id, {
+        tool_calls: tools as Message['tool_calls'],
       });
     }
   };
@@ -208,6 +244,10 @@ function ChatPageInner() {
           streamingContentRef.current = streamingContent;
         }, [streamingContent]);
         const [liveToolCalls, setLiveToolCalls] = useState<ToolCallData[]>([]);
+        const liveToolCallsRef = React.useRef<ToolCallData[]>([]);
+        React.useEffect(() => {
+          liveToolCallsRef.current = liveToolCalls;
+        }, [liveToolCalls]);
                 const [streamStatusDetail, setStreamStatusDetail] = useState<string | null>(null);
         const termHasEntries = useTerminalStore((s) => s.entries.length > 0);
 
@@ -499,12 +539,19 @@ function ChatPageInner() {
   React.useEffect(() => {
     const onInvalid = (e: Event) => {
       const id = (e as CustomEvent).detail?.sessionId as string | undefined;
+      if (id) {
+        clearDeletedSessionLocalState(id);
+        setStoppingSid(id, false);
+      }
       const cur = useSessionStore.getState().currentSession?.id;
       if (id && cur === id) {
         useSessionStore.getState().setCurrentSession(null);
         useSessionStore.getState().clearMessages();
         setIsStreaming(false);
         setStreamStatusDetail(null);
+        setLiveToolCalls([]);
+        streamingContentRef.current = '';
+        setStreamingContent('');
       }
     };
     window.addEventListener('tevarn:session-invalid', onInvalid);
@@ -520,7 +567,7 @@ function ChatPageInner() {
       })
       .catch(() => undefined);
     return () => window.removeEventListener('tevarn:session-invalid', onInvalid);
-  }, []);
+  }, [setStoppingSid]);
 
   const handleStreamDelta = useCallback((msg: StreamDeltaMessage) => {
       const sid = currentSession?.id || '';
@@ -827,28 +874,22 @@ function ChatPageInner() {
                 /* already cached on status updates */
               }
               const leftover = streamingContentRef.current;
+              const leftoverTools = snapshotStoppedTools(liveToolCallsRef.current);
               streamingContentRef.current = '';
               setStreamingContent('');
-              // 先把残留 running 标 completed，再清空，避免 idle 瞬间 UI 仍显示「运行中」
-              setLiveToolCalls((prev) =>
-                prev.map((t) =>
-                  t.status === 'failed'
-                    ? t
-                    : { ...t, status: 'completed' as const },
-                ),
-              );
-              // 下一帧清空 live 列表（历史消息已 load）
-              window.setTimeout(() => setLiveToolCalls([]), 0);
+              setLiveToolCalls(leftoverTools);
               if (sid) streamSessionApi().markIdle(sid);
               // Stop keeps a local partial if history has not landed yet (ChatGPT/Cursor).
-              if (leftover || sid) {
+              if (leftover || leftoverTools.length || sid) {
                 setTimeout(() => {
                   keepPartialAssistantOnIdle(
                     sid,
                     leftover || '',
                     loadMessages,
                     addMessage,
+                    leftoverTools,
                   );
+                  setLiveToolCalls([]);
                 }, 0);
               }
             }
@@ -1042,15 +1083,43 @@ function ChatPageInner() {
             });
           }
         } else {
+          if (sid) setStoppingSid(sid, false);
           setIsStreaming(false);
           setStreamStatusDetail(null);
+          const leftover = streamingContentRef.current || payload.partial_content || '';
+          const leftoverTools = snapshotStoppedTools(
+            liveToolCallsRef.current.length
+              ? liveToolCallsRef.current
+              : (payload.live_tools || []).map((t) => ({
+                  id: String(t.id || ''),
+                  name: String(t.name || 'tool'),
+                  arguments: (t.arguments && typeof t.arguments === 'object'
+                    ? t.arguments
+                    : {}) as Record<string, unknown>,
+                  status: (t.status === 'failed'
+                    ? 'failed'
+                    : t.status === 'running'
+                      ? 'running'
+                      : t.status === 'cancelled'
+                        ? 'cancelled'
+                        : 'completed') as ToolCallData['status'],
+                  result: t.result ?? undefined,
+                })),
+          );
           streamingContentRef.current = '';
           setStreamingContent('');
-          setLiveToolCalls([]);
+          setLiveToolCalls(leftoverTools);
           if (sid) {
             streamSessionApi().markIdle(sid);
-            loadMessages(sid).catch(console.error);
+            keepPartialAssistantOnIdle(
+              sid,
+              leftover,
+              loadMessages,
+              addMessage,
+              leftoverTools,
+            );
           }
+          window.setTimeout(() => setLiveToolCalls([]), 0);
         }
         if (payload.messages?.length && sid) {
           for (const m of payload.messages) {
@@ -1066,7 +1135,7 @@ function ChatPageInner() {
             });
           }
         }
-      }, [reconcileMessage, currentSession?.id, loadMessages]);
+      }, [reconcileMessage, currentSession?.id, loadMessages, addMessage, setStoppingSid]);
 
 const handleUserMessageAck = useCallback(
         (payload: {
@@ -1376,8 +1445,7 @@ const handleUserMessageAck = useCallback(
         subAgentIds?: string[],
         control?: 'steer' | 'queue' | 'interrupt'
       ): Promise<boolean> => {
-        const stopCheckSid = currentSession?.id || '';
-        if (sendInFlightRef.current || isStoppingSid(stopCheckSid)) return false;
+        if (sendInFlightRef.current) return false;
         sendInFlightRef.current = true;
 
         // D10 专业模式：强制项目文件夹
@@ -1529,7 +1597,6 @@ const handleUserMessageAck = useCallback(
         createAndLoadSession,
         waitForConnection,
         t,
-        isStoppingSid,
         setStoppingSid,
         kickedByPeer,
       ]
@@ -1673,16 +1740,23 @@ const handleUserMessageAck = useCallback(
       if (!ok) {
         // 未连上：本地直接收束，保留已流出正文
         const leftover = streamingContentRef.current || '';
+        const leftoverTools = snapshotStoppedTools(liveToolCallsRef.current);
         setStoppingSid(sid, false);
         if (useSessionStore.getState().currentSession?.id === sid) {
           setIsStreaming(false);
           setStreamStatusDetail(null);
-          setLiveToolCalls([]);
+          setLiveToolCalls(leftoverTools);
           streamingContentRef.current = '';
           setStreamingContent('');
         }
         streamSessionApi().markIdle(sid);
-        keepPartialAssistantOnIdle(sid, leftover, loadMessages, addMessage);
+        keepPartialAssistantOnIdle(
+          sid,
+          leftover,
+          loadMessages,
+          addMessage,
+          leftoverTools,
+        );
         return;
       }
       // 兜底：8s 仍无 idle 则强制收束——仅影响发起 stop 的 sid，且仅当仍在看该会话时改 UI
@@ -1690,16 +1764,23 @@ const handleUserMessageAck = useCallback(
         if (!isStoppingSid(sid)) return;
         locallyStoppedRef.current.add(sid);
         const leftover = streamingContentRef.current || '';
+        const leftoverTools = snapshotStoppedTools(liveToolCallsRef.current);
         setStoppingSid(sid, false);
         streamSessionApi().markIdle(sid);
         if (useSessionStore.getState().currentSession?.id === sid) {
           setIsStreaming(false);
           setStreamStatusDetail(null);
-          setLiveToolCalls([]);
+          setLiveToolCalls(leftoverTools);
           streamingContentRef.current = '';
           setStreamingContent('');
         }
-        keepPartialAssistantOnIdle(sid, leftover, loadMessages, addMessage);
+        keepPartialAssistantOnIdle(
+          sid,
+          leftover,
+          loadMessages,
+          addMessage,
+          leftoverTools,
+        );
       }, 8000);
     }, [sendStop, currentSession, loadMessages, addMessage, t, setStoppingSid, isStoppingSid]);
 
