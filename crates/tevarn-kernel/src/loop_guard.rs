@@ -819,16 +819,20 @@ mod tests {
             "p1",
             LoopGuardConfig::for_role(false, RoleKind::Steward, None),
         );
-        for _ in 0..3 {
+        // Production window: ≥6 orch-heavy of last 8 (relaxed from 3/5 so
+        // multi-round hire/dispatch does not 熔断 a long chat).
+        for i in 0..5 {
             let d = g.begin_round(
                 "p1",
                 &["crew_steward".into(), "crew_steward".into()],
             );
-            if matches!(d, GuardDecision::ForceFinal { .. }) {
-                return;
-            }
+            assert!(
+                matches!(d, GuardDecision::Allow { .. }),
+                "round {} must stay allow under 6/8 window, got {:?}",
+                i + 1,
+                d.to_dict()
+            );
         }
-        // 3 orch rounds should trip
         let d = g.begin_round("p1", &["crew_steward".into()]);
         assert!(
             matches!(
@@ -836,7 +840,7 @@ mod tests {
                 GuardDecision::ForceFinal {
                     code: ref c,
                     ..
-                } if c == "orch_window_thrash" || c == "max_tool_rounds"
+                } if c == "orch_window_thrash"
             ),
             "got {:?}",
             d.to_dict()

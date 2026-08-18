@@ -2785,36 +2785,7 @@ async fn handle_connection(runtime: Arc<Runtime>, stream: TcpStream) {
         // clients (UI panel 500s / ping timeout) when workers blocked on locks.
         // Also: if the blocking pool saturates while every worker awaits
         // spawn_blocking, accept() never runs → host looks "up" but dead.
-        let rt = runtime.clone();
-        let resp = match tokio::time::timeout(
-            DISPATCH_TIMEOUT,
-            tokio::task::spawn_blocking(move || dispatch(&rt, &line)),
-        )
-        .await
-        {
-            Ok(Ok(v)) => v,
-            Ok(Err(e)) => {
-                warn!("dispatch join failed: {e}");
-                err_resp(
-                    serde_json::Value::Null,
-                    -32603,
-                    format!("dispatch join: {e}"),
-                    None,
-                )
-            }
-            Err(_) => {
-                warn!("dispatch timed out after {DISPATCH_TIMEOUT:?}");
-                err_resp(
-                    serde_json::Value::Null,
-                    -32603,
-                    format!(
-                        "dispatch timeout after {}s (kernel busy / lock)",
-                        DISPATCH_TIMEOUT.as_secs()
-                    ),
-                    None,
-                )
-            }
-        };
+        let resp = dispatch_with_timeout(runtime.clone(), line).await;
         let mut out = serde_json::to_string(&resp).unwrap_or_else(|_| {
             r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"serialize"}}"#
                 .into()
@@ -2842,6 +2813,55 @@ async fn run_tcp(runtime: Arc<Runtime>, addr: SocketAddr) -> anyhow::Result<()> 
     }
 }
 
+async fn isolation_reap_loop(runtime: Arc<Runtime>) {
+    // Poll exited children even when the Python dispatcher is idle.
+    // max_age stays 600s so a long-running intended child is not killed early.
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        let rt = runtime.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            rt.kernel().isolation_reap(Some(600.0));
+        })
+        .await;
+    }
+}
+
+async fn dispatch_with_timeout(runtime: Arc<Runtime>, line: String) -> Value {
+    let rt = runtime.clone();
+    match tokio::time::timeout(
+        DISPATCH_TIMEOUT,
+        tokio::task::spawn_blocking(move || dispatch(&rt, &line)),
+    )
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
+            warn!("dispatch join failed: {e}");
+            err_resp(
+                serde_json::Value::Null,
+                -32603,
+                format!("dispatch join: {e}"),
+                None,
+            )
+        }
+        Err(_) => {
+            warn!("dispatch timed out after {DISPATCH_TIMEOUT:?}");
+            runtime.kernel().wasm_interrupt();
+            err_resp(
+                serde_json::Value::Null,
+                -32603,
+                format!(
+                    "dispatch timeout after {}s (kernel busy / lock)",
+                    DISPATCH_TIMEOUT.as_secs()
+                ),
+                None,
+            )
+        }
+    }
+}
+
 async fn run_stdio(runtime: Arc<Runtime>) -> anyhow::Result<()> {
     use tokio::io::stdin;
     info!("tevarn-kernel-host stdio mode");
@@ -2852,7 +2872,7 @@ async fn run_stdio(runtime: Arc<Runtime>) -> anyhow::Result<()> {
         if line.is_empty() {
             continue;
         }
-        let resp = dispatch(&runtime, &line);
+        let resp = dispatch_with_timeout(runtime.clone(), line).await;
         let mut out = serde_json::to_string(&resp).unwrap_or_default();
         out.push('\n');
         stdout.write_all(out.as_bytes()).await?;
@@ -2892,6 +2912,11 @@ async fn async_main() -> anyhow::Result<()> {
         runtime.health(),
         DISPATCH_TIMEOUT.as_secs()
     );
+
+    let reap_rt = runtime.clone();
+    tokio::spawn(async move {
+        isolation_reap_loop(reap_rt).await;
+    });
 
     if args.stdio {
         run_stdio(runtime).await

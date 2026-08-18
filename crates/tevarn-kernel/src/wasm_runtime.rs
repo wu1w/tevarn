@@ -151,13 +151,21 @@ fn make_engine() -> Engine {
     let mut config = Config::new();
     // Fuel: instruction metering hard stop
     let _ = config.consume_fuel(true);
-    // Epoch is optional; fuel is primary budget
+    // Epoch: host dispatch timeout increments this to trap a hung guest
+    // without holding the kernel write lock for the whole invoke.
+    let _ = config.epoch_interruption(true);
     let _ = config.wasm_bulk_memory(true);
     let _ = config.wasm_multi_value(true);
     // Cranelift is default compiler backend
     Engine::new(&config).unwrap_or_else(|e| {
-        tracing::error!("wasmtime Engine::new failed ({e}); using Engine::default()");
-        Engine::default()
+        tracing::error!("wasmtime Engine::new failed ({e}); retrying configured engine");
+        let mut retry = Config::new();
+        let _ = retry.consume_fuel(true);
+        let _ = retry.epoch_interruption(true);
+        Engine::new(&retry).unwrap_or_else(|e2| {
+            tracing::error!("wasmtime retry failed ({e2}); using Engine::default()");
+            Engine::default()
+        })
     })
 }
 
@@ -198,6 +206,71 @@ pub struct WasmInvokeResult {
     pub error: Option<String>,
     /// "wasmtime" | "hostcall_ledger"
     pub engine: String,
+}
+
+/// Snapshot of one invoke so the kernel lock can be dropped while the guest runs.
+pub struct PreparedInvoke {
+    engine: Engine,
+    compiled: Option<Module>,
+    meta: WasmModule,
+    blob: Vec<u8>,
+    memory: Vec<u8>,
+}
+
+/// Mutations to apply after an unlocked invoke returns.
+#[derive(Debug, Clone)]
+pub struct InvokeEffects {
+    pub module_id: String,
+    pub status: Option<String>,
+    pub engine_name: Option<String>,
+    pub current_pages: Option<u32>,
+    pub memory_bytes_used: Option<u64>,
+    pub memory: Option<Vec<u8>>,
+}
+
+impl PreparedInvoke {
+    /// Run wasmtime / hostcall on this snapshot. Does not touch the live runtime.
+    pub fn run(self, entry: &str, params: &Value) -> (WasmInvokeResult, InvokeEffects) {
+        let id = self.meta.id.clone();
+        let status_before = self.meta.status.clone();
+        let mut mini = WasmRuntime {
+            engine: self.engine,
+            modules: HashMap::from([(id.clone(), self.meta.clone())]),
+            blobs: HashMap::from([(id.clone(), self.blob)]),
+            compiled: self.compiled.into_iter().map(|m| (id.clone(), m)).collect(),
+            memory: HashMap::from([(id.clone(), self.memory)]),
+            default_fuel: self.meta.fuel_limit,
+            default_mem_pages: self.meta.memory_pages_limit,
+            default_max_ops: self.meta.max_ops,
+        };
+        let result = match mini.invoke(&id, entry, params) {
+            Ok(r) => r,
+            Err(e) => WasmInvokeResult {
+                module_id: id.clone(),
+                ok: false,
+                fuel_used: 0,
+                ops_executed: 0,
+                max_stack: 0,
+                hostcalls: vec![],
+                output: Value::Null,
+                error: Some(e),
+                engine: "none".into(),
+            },
+        };
+        let after = mini.modules.get(&id).cloned();
+        let effects = InvokeEffects {
+            module_id: id.clone(),
+            status: after
+                .as_ref()
+                .map(|m| m.status.clone())
+                .filter(|s| s != &status_before),
+            engine_name: after.as_ref().map(|m| m.engine.clone()),
+            current_pages: after.as_ref().map(|m| m.current_pages),
+            memory_bytes_used: after.as_ref().map(|m| m.memory_bytes_used),
+            memory: mini.memory.remove(&id),
+        };
+        (result, effects)
+    }
 }
 
 // ── host state for wasmtime ────────────────────────────────
@@ -512,6 +585,52 @@ impl WasmRuntime {
         Ok(m.clone())
     }
 
+    /// Bump the engine epoch so any in-flight guest with `set_epoch_deadline`
+    /// traps. Cheap and lock-free relative to WASM execution.
+    pub fn increment_epoch(&self) {
+        self.engine.increment_epoch();
+    }
+
+    /// Clone invoke inputs so the caller can drop the kernel write lock.
+    pub fn prepare_invoke(&self, module_id: &str) -> Result<PreparedInvoke, String> {
+        let meta = self
+            .modules
+            .get(module_id)
+            .cloned()
+            .ok_or_else(|| format!("unknown module {module_id}"))?;
+        if meta.status != "active" && meta.status != "loaded" {
+            return Err(format!("module status {}", meta.status));
+        }
+        Ok(PreparedInvoke {
+            engine: self.engine.clone(),
+            compiled: self.compiled.get(module_id).cloned(),
+            meta,
+            blob: self.blobs.get(module_id).cloned().unwrap_or_default(),
+            memory: self.memory.get(module_id).cloned().unwrap_or_default(),
+        })
+    }
+
+    pub fn apply_invoke_effects(&mut self, effects: InvokeEffects) {
+        let id = &effects.module_id;
+        if let Some(mm) = self.modules.get_mut(id) {
+            if let Some(s) = effects.status {
+                mm.status = s;
+            }
+            if let Some(e) = effects.engine_name {
+                mm.engine = e;
+            }
+            if let Some(p) = effects.current_pages {
+                mm.current_pages = p;
+            }
+            if let Some(b) = effects.memory_bytes_used {
+                mm.memory_bytes_used = b;
+            }
+        }
+        if let Some(mem) = effects.memory {
+            self.memory.insert(id.clone(), mem);
+        }
+    }
+
     pub fn invoke(
         &mut self,
         module_id: &str,
@@ -601,6 +720,8 @@ impl WasmRuntime {
         store
             .set_fuel(m.fuel_limit)
             .map_err(|e| format!("set_fuel: {e}"))?;
+        // Trap when the host increments the shared engine epoch (dispatch timeout).
+        store.set_epoch_deadline(1);
 
         let mut linker = Linker::new(&self.engine);
         define_env_imports(&mut linker)?;
@@ -1145,6 +1266,7 @@ impl WasmRuntime {
                 "wasmtime",
                 "cranelift",
                 "fuel",
+                "epoch_interruption",
                 "store_limits_memory",
                 "wat",
                 "env.log",
@@ -1335,5 +1457,28 @@ mod tests {
             )
             .unwrap();
         assert!(!r.ok);
+    }
+
+    #[test]
+    fn epoch_increment_traps_infinite_loop() {
+        let mut rt = WasmRuntime::default();
+        let wat = br#"(module
+            (func (export "main")
+                (loop $l (br $l)))
+        )"#;
+        let m = rt.load("spin", wat, Some(u64::MAX / 4), Some(2)).unwrap();
+        assert!(m.wasmtime_ready);
+        rt.activate(&m.id).unwrap();
+        let job = rt.prepare_invoke(&m.id).unwrap();
+        let engine = rt.engine.clone();
+        let handle = std::thread::spawn(move || job.run("main", &json!({})));
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        engine.increment_epoch();
+        let (r, _) = handle.join().expect("invoke thread");
+        assert!(!r.ok, "epoch interrupt must trap the guest: {:?}", r.error);
+        assert!(
+            r.error.is_some(),
+            "trapped invoke should surface an error"
+        );
     }
 }
