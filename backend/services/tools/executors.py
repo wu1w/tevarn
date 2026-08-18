@@ -1330,13 +1330,12 @@ async def execute_command(config: dict[str, Any], arguments: dict[str, Any]) -> 
     # Foreground with Grok-style timeout→background (do not kill long work).
     try:
         from backend.computer.text_decode import decode_process_bytes
+        from backend.core.host_commands import tool_spawn_env
         from backend.core.safe_subprocess import create_process, needs_shell
         from backend.services.tools.process_registry import (
             adopt_running,
             format_process,
         )
-
-        from backend.core.host_commands import tool_spawn_env
 
         _child_env = tool_spawn_env()
         proc = await create_process(
