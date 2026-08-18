@@ -3,9 +3,10 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -126,21 +127,36 @@ impl KernelEvent {
     }
 }
 
+enum AuditMsg {
+    Event(Value),
+    Flush(SyncSender<()>),
+}
+
+/// Disk + rotation state. Shared with a dedicated writer thread so the
+/// kernel write lock is never held across audit I/O.
+struct AuditDisk {
+    path: PathBuf,
+    lock: Mutex<()>,
+    max_bytes: u64,
+    keep_segments: u32,
+    worm: AtomicBool,
+    anchor_path: PathBuf,
+    // audit-fix: anchor 降频状态（事件计数 / 上次 anchor 时刻 epoch millis）
+    anchor_events: AtomicU64,
+    anchor_last_ms: AtomicU64,
+}
+
 /// Append-only JSONL audit store with size-based rotation + optional WORM.
 ///
 /// WORM (`TEVARN_AUDIT_WORM=1`): rotated segments are never deleted; new
 /// segments get monotonic names `.worm.<ts>`. External anchor file holds
 /// signed tip hash for offline verification.
+///
+/// `append` is non-blocking (bounded queue). A stuck disk cannot freeze
+/// mediate / charge / court. Fail-open: a full queue drops the line.
 pub struct AuditEventStore {
-    path: PathBuf,
-    lock: Mutex<()>,
-    max_bytes: u64,
-    keep_segments: u32,
-    worm: bool,
-    anchor_path: PathBuf,
-    // audit-fix: anchor 降频状态（事件计数 / 上次 anchor 时刻 epoch millis）
-    anchor_events: AtomicU64,
-    anchor_last_ms: AtomicU64,
+    disk: Arc<AuditDisk>,
+    tx: SyncSender<AuditMsg>,
 }
 
 impl AuditEventStore {
@@ -162,16 +178,33 @@ impl AuditEventStore {
             })
             .unwrap_or(false);
         let anchor_path = path.with_extension("anchor.json");
-        Self {
+        let disk = Arc::new(AuditDisk {
             path,
             lock: Mutex::new(()),
             max_bytes,
             keep_segments,
-            worm,
+            worm: AtomicBool::new(worm),
             anchor_path,
             anchor_events: AtomicU64::new(0),
             anchor_last_ms: AtomicU64::new(0),
-        }
+        });
+        let (tx, rx) = mpsc::sync_channel::<AuditMsg>(512);
+        let writer = disk.clone();
+        let _ = std::thread::Builder::new()
+            .name("tevarn-audit".into())
+            .spawn(move || {
+                while let Ok(msg) = rx.recv() {
+                    match msg {
+                        AuditMsg::Event(v) => {
+                            writer.write_event(&v);
+                        }
+                        AuditMsg::Flush(ack) => {
+                            let _ = ack.send(());
+                        }
+                    }
+                }
+            });
+        Self { disk, tx }
     }
 
     pub fn default_path() -> PathBuf {
@@ -179,17 +212,86 @@ impl AuditEventStore {
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        &self.disk.path
     }
 
     pub fn worm(&self) -> bool {
-        self.worm
+        self.disk.worm.load(Ordering::Relaxed)
     }
 
     pub fn set_worm(&mut self, on: bool) {
-        self.worm = on;
+        self.disk.worm.store(on, Ordering::Relaxed);
     }
 
+    /// Block until queued events are written (verify / tests). Never used
+    /// on the mediate hot path.
+    pub fn flush(&self) {
+        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+        if self.tx.send(AuditMsg::Flush(ack_tx)).is_ok() {
+            let _ = ack_rx.recv_timeout(Duration::from_secs(2));
+        }
+    }
+
+    /// Enqueue an event. Never blocks the kernel lock on disk I/O.
+    /// Fail-open: a full or dead queue drops the line (or writes inline).
+    pub fn append(&self, event: &Value) -> bool {
+        match self.tx.try_send(AuditMsg::Event(event.clone())) {
+            Ok(()) => true,
+            Err(mpsc::TrySendError::Full(_)) => {
+                tracing::warn!("audit queue full; dropping event (fail-open)");
+                false
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => self.disk.write_event(event),
+        }
+    }
+
+    /// External anchor: tip hash + monotonic seq file for offline integrity checks.
+    pub fn write_anchor(&self, tip_hash: &str, prev_hash: Option<&str>) -> bool {
+        self.disk.write_anchor(tip_hash, prev_hash)
+    }
+
+    pub fn read_anchor(&self) -> Option<Value> {
+        self.flush();
+        self.disk.read_anchor()
+    }
+
+    /// Verify anchor tip matches active file tail hash.
+    pub fn verify_anchor(&self) -> Value {
+        self.flush();
+        let tail = self.disk.load_tail_hash();
+        let anchor = self.disk.read_anchor();
+        let tip = anchor
+            .as_ref()
+            .and_then(|a| a.get("tip_hash"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let ok = match (&tail, &tip) {
+            (Some(t), Some(a)) => t == a,
+            (None, None) => true,
+            _ => false,
+        };
+        serde_json::json!({
+            "ok": ok,
+            "worm": self.worm(),
+            "tail_hash": tail,
+            "anchor_tip": tip,
+            "anchor_path": self.disk.anchor_path.display().to_string(),
+            "audit_path": self.disk.path.display().to_string(),
+        })
+    }
+
+    pub fn load_tail_hash(&self) -> Option<String> {
+        self.flush();
+        self.disk.load_tail_hash()
+    }
+
+    pub fn verify_file_chain(&self) -> (bool, i64) {
+        self.flush();
+        self.disk.verify_file_chain()
+    }
+}
+
+impl AuditDisk {
     fn rotate_if_needed(&self) {
         let meta = match fs::metadata(&self.path) {
             Ok(m) => m,
@@ -199,7 +301,7 @@ impl AuditEventStore {
             return;
         }
         let base = self.path.to_string_lossy().to_string();
-        if self.worm {
+        if self.worm.load(Ordering::Relaxed) {
             // WORM: never delete; seal active file under unique name
             let sealed = format!(
                 "{base}.worm.{}",
@@ -227,7 +329,7 @@ impl AuditEventStore {
         let _ = fs::rename(&self.path, &rotated);
     }
 
-    pub fn append(&self, event: &Value) -> bool {
+    fn write_event(&self, event: &Value) -> bool {
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(parent) = self.path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -260,13 +362,12 @@ impl AuditEventStore {
         true
     }
 
-    /// External anchor: tip hash + monotonic seq file for offline integrity checks.
-    pub fn write_anchor(&self, tip_hash: &str, prev_hash: Option<&str>) -> bool {
+    fn write_anchor(&self, tip_hash: &str, prev_hash: Option<&str>) -> bool {
         let body = serde_json::json!({
             "tip_hash": tip_hash,
             "prev_hash": prev_hash.unwrap_or(""),
             "path": self.path.display().to_string(),
-            "worm": self.worm,
+            "worm": self.worm.load(Ordering::Relaxed),
             "anchored_at": SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -296,36 +397,12 @@ impl AuditEventStore {
         .is_ok()
     }
 
-    pub fn read_anchor(&self) -> Option<Value> {
+    fn read_anchor(&self) -> Option<Value> {
         let s = fs::read_to_string(&self.anchor_path).ok()?;
         serde_json::from_str(&s).ok()
     }
 
-    /// Verify anchor tip matches active file tail hash.
-    pub fn verify_anchor(&self) -> Value {
-        let tail = self.load_tail_hash();
-        let anchor = self.read_anchor();
-        let tip = anchor
-            .as_ref()
-            .and_then(|a| a.get("tip_hash"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let ok = match (&tail, &tip) {
-            (Some(t), Some(a)) => t == a,
-            (None, None) => true,
-            _ => false,
-        };
-        serde_json::json!({
-            "ok": ok,
-            "worm": self.worm,
-            "tail_hash": tail,
-            "anchor_tip": tip,
-            "anchor_path": self.anchor_path.display().to_string(),
-            "audit_path": self.path.display().to_string(),
-        })
-    }
-
-    pub fn load_tail_hash(&self) -> Option<String> {
+    fn load_tail_hash(&self) -> Option<String> {
         let f = File::open(&self.path).ok()?;
         let reader = BufReader::new(f);
         let mut last: Option<String> = None;
@@ -343,7 +420,7 @@ impl AuditEventStore {
         last
     }
 
-    pub fn verify_file_chain(&self) -> (bool, i64) {
+    fn verify_file_chain(&self) -> (bool, i64) {
         let Ok(f) = File::open(&self.path) else {
             return (false, 0);
         };

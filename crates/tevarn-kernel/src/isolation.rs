@@ -434,14 +434,21 @@ impl IsolationSupervisor {
     }
 
     /// Kill OS child (if owned) then mark ledger killed.
+    ///
+    /// Does not `wait()` on the calling thread: a wedged child must not
+    /// hold the kernel write lock (chat stop / end_process).
     pub fn kill(&mut self, handle_id: &str) -> Option<IsolationHandle> {
         if let Some(mut child) = self.children.remove(handle_id) {
-            // audit-fix: unix 下先整组 SIGKILL（pgid==child pid），再 kill+wait
-            // 回收组长本体，防孙进程泄漏
+            // unix: 先整组 SIGKILL（pgid==child pid），再 kill；wait 放到
+            // 分离线程，防 D 状态/僵尸回收卡住 host。
             #[cfg(unix)]
             Self::kill_process_group(child.id());
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = std::thread::Builder::new()
+                .name("iso-wait".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
         } else if let Some(h) = self.handles.get(handle_id) {
             if h.status == "running" {
                 if let Some(pid) = h.os_pid {
@@ -679,6 +686,71 @@ mod tests {
         let completed = s.complete(&h.id, 0).expect("complete");
         assert_eq!(completed.status, "exited");
         assert_eq!(completed.exit_code, Some(0));
+    }
+
+    fn pid_alive(pid: u32) -> bool {
+        if pid == 0 {
+            return false;
+        }
+        #[cfg(windows)]
+        {
+            Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+                .stdin(Stdio::null())
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+                .unwrap_or(false)
+        }
+        #[cfg(not(windows))]
+        {
+            Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|st| st.success())
+                .unwrap_or(false)
+        }
+    }
+
+    #[test]
+    fn drop_process_kills_os_child() {
+        let mut s = IsolationSupervisor::new();
+        s.set_process_profile("p1", IsolationProfile::Off);
+        #[cfg(windows)]
+        let cmd = "ping -n 30 127.0.0.1";
+        #[cfg(not(windows))]
+        let cmd = "sleep 30";
+        let h = s.spawn_os("p1", cmd, "os").expect("spawn");
+        let pid = h.os_pid.expect("os pid");
+        assert!(pid_alive(pid), "child should be running");
+        s.drop_process("p1");
+        let mut dead = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if !pid_alive(pid) {
+                dead = true;
+                break;
+            }
+        }
+        assert!(dead, "drop_process must SIGKILL the OS child");
+        assert_eq!(s.status()["os_children"], 0);
+    }
+
+    #[test]
+    fn kill_returns_without_waiting_on_child() {
+        let mut s = IsolationSupervisor::new();
+        s.set_process_profile("p1", IsolationProfile::Off);
+        #[cfg(windows)]
+        let cmd = "ping -n 30 127.0.0.1";
+        #[cfg(not(windows))]
+        let cmd = "sleep 30";
+        let h = s.spawn_os("p1", cmd, "os").expect("spawn");
+        let t0 = std::time::Instant::now();
+        let killed = s.kill(&h.id).expect("kill");
+        assert!(t0.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(killed.status, "killed");
     }
 
 }

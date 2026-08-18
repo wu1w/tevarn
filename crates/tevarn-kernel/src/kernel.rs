@@ -1699,6 +1699,9 @@ impl AgentKernel {
     pub fn llm_release_by_process(&self, process_id: &str) -> usize {
         let mut g = self.inner.write();
         let n = g.llm.release_by_process(process_id);
+        // Chat stop calls this RPC (not end_process). Reap isolation OS
+        // children here so Stop does not wait for the 600s dispatcher tick.
+        g.isolation.drop_process(process_id);
         if n > 0 {
             Self::emit_locked(
                 &mut g,
@@ -4050,11 +4053,26 @@ impl AgentKernel {
         entry: &str,
         params: Value,
     ) -> KernelResult<Value> {
-        let mut g = self.inner.write();
-        match g.wasm.invoke(module_id, entry, &params) {
-            Ok(r) => Ok(json!(r)),
-            Err(e) => Err(KernelError::Invalid(e)),
+        // Snapshot under a short lock, then run the guest with the kernel
+        // lock released so a hung skill cannot freeze mediate/charge/court.
+        let job = {
+            let g = self.inner.read();
+            g.wasm
+                .prepare_invoke(module_id)
+                .map_err(KernelError::Invalid)?
+        };
+        let (result, effects) = job.run(entry, &params);
+        {
+            let mut g = self.inner.write();
+            g.wasm.apply_invoke_effects(effects);
         }
+        Ok(json!(result))
+    }
+
+    /// Trap in-flight WASM guests (host dispatch timeout). Does not take
+    /// the write lock and does not introduce a user-facing gate.
+    pub fn wasm_interrupt(&self) {
+        self.inner.read().wasm.increment_epoch();
     }
 
     pub fn wasm_unload(&self, module_id: &str) -> KernelResult<Value> {
@@ -5002,5 +5020,128 @@ mod tests {
         kernel.session_grant_clear("sess-1");
         let cleared = kernel.decide_tool("file_write", Some(&args), Some(&p.id), None, None);
         assert_eq!(cleared.verdict, "ask");
+    }
+
+    #[test]
+    fn wasm_invoke_does_not_hold_kernel_lock() {
+        use std::sync::Arc;
+        let kernel = Arc::new(k());
+        let wat = br#"(module
+            (func (export "main")
+                (loop $l (br $l)))
+        )"#;
+        // Modest fuel so the guest cannot outlive the test if epoch races.
+        let m = kernel
+            .wasm_load(
+                "spin",
+                std::str::from_utf8(wat).unwrap(),
+                Some(2_000_000),
+                Some(2),
+            )
+            .unwrap();
+        let mid = m["id"].as_str().unwrap().to_string();
+        kernel.wasm_activate(&mid).unwrap();
+        let k_run = kernel.clone();
+        let mid_run = mid.clone();
+        let invoke = std::thread::spawn(move || k_run.wasm_invoke(&mid_run, "main", json!({})));
+        // While the guest spins, mediate / charge must still proceed.
+        let p = kernel
+            .create_process(
+                "main",
+                None,
+                None,
+                Some(vec!["file_read".into()]),
+                Some(100),
+                None,
+            )
+            .unwrap();
+        let t0 = std::time::Instant::now();
+        assert!(kernel.mediate(&p.id, "tool_call", "file_read", None).is_ok());
+        assert!(t0.elapsed() < std::time::Duration::from_secs(2));
+        kernel.wasm_interrupt();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        kernel.wasm_interrupt();
+        let _ = invoke.join();
+    }
+
+    fn isolation_pid_alive(pid: u32) -> bool {
+        if pid == 0 {
+            return false;
+        }
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn end_process_reaps_os_children() {
+        let kernel = k();
+        let p = kernel
+            .create_process(
+                "main",
+                None,
+                None,
+                Some(vec!["terminal".into()]),
+                None,
+                None,
+            )
+            .unwrap();
+        kernel.isolation_set_profile(&p.id, "off");
+        let h = kernel
+            .isolation_spawn_os(&p.id, "sleep 30", Some("os"))
+            .unwrap();
+        let pid = h["os_pid"].as_u64().unwrap() as u32;
+        assert!(isolation_pid_alive(pid));
+        kernel
+            .end_process(&p.id, "killed", Some("chat_stop"))
+            .unwrap();
+        let mut dead = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if !isolation_pid_alive(pid) {
+                dead = true;
+                break;
+            }
+        }
+        assert!(dead, "end_process must SIGKILL isolation_spawn_os children");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn llm_release_by_process_reaps_os_children() {
+        // Chat stop calls llm_release_by_process, not end_process.
+        let kernel = k();
+        let p = kernel
+            .create_process(
+                "main",
+                None,
+                None,
+                Some(vec!["terminal".into()]),
+                None,
+                None,
+            )
+            .unwrap();
+        kernel.isolation_set_profile(&p.id, "off");
+        let h = kernel
+            .isolation_spawn_os(&p.id, "sleep 30", Some("os"))
+            .unwrap();
+        let pid = h["os_pid"].as_u64().unwrap() as u32;
+        assert!(isolation_pid_alive(pid));
+        let _ = kernel.llm_release_by_process(&p.id);
+        let mut dead = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if !isolation_pid_alive(pid) {
+                dead = true;
+                break;
+            }
+        }
+        assert!(dead, "chat-stop llm_release_by_process must SIGKILL OS children");
     }
 }
