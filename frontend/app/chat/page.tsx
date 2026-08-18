@@ -1294,10 +1294,10 @@ const handleUserMessageAck = useCallback(
         window.setTimeout(trySync, 100);
       }
     };
-    const t = window.setTimeout(trySync, 50);
+    const syncTimer = window.setTimeout(trySync, 50);
     return () => {
       cancelled = true;
-      window.clearTimeout(t);
+      window.clearTimeout(syncTimer);
       useChatWsBridge.getState().setHandlers(null);
     };
   }, [

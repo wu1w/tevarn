@@ -37,6 +37,7 @@ import type {
 } from '@/types/zero-code';
 import type { CronJob } from '@/types';
 import { useConfirm } from '@/components/desktop/ConfirmDialog';
+import { useT } from '@/stores/localeStore';
 
 // ────────────────── 子组件：Webhook 表单对话框 ──────────────────
 
@@ -63,6 +64,7 @@ function WebhookFormDialog({
   const [newEvent, setNewEvent] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const t = useT();
 
   const addEvent = () => {
     if (newEvent && !form.events?.includes(newEvent)) {
@@ -195,6 +197,7 @@ function HookFormDialog({
   onSaved: () => void;
 }) {
   const isEdit = !!initial;
+  const t = useT();
   const [form, setForm] = useState<CronHookCreate>({
     name: initial?.name || '',
     cron_job_id: cronJobId,
