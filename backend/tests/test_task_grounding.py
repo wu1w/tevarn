@@ -138,3 +138,41 @@ def test_classify_all_multi():
     # first match is primary; all may include more if overlapping
     kids = classify_all("审计并统计漏洞占比")
     assert "audit" in kids
+
+
+def test_summary_conclusion_is_not_doc_qa():
+    assert classify_task("请立即用简短中文汇报。1. 总结论（与批次状态一致）") is None
+    assert classify_task("根据 README 总结安装步骤") == "doc_qa"
+
+
+def test_footer_skips_api_fields_and_slash_commands():
+    from backend.agent.task_grounding import extract_cited_paths
+
+    report = (
+        "真正的日常旋钮是 `max_think_tokens` + `/fast` 关 think，"
+        "不要迷信 `reasoning_effort=low/medium/xhigh`。"
+        "请求构造见 `backend/agent/loop.py`。"
+    )
+    paths = extract_cited_paths(report)
+    assert "reasoning_effort=low/medium/xhigh" not in paths
+    assert "/fast" not in paths
+    assert any("loop.py" in p for p in paths)
+    out = annotate_grounded_report(
+        report,
+        user_input="根据设计文档总结结论",
+        tools_used=["file_read", "command"],
+    )
+    assert "reasoning_effort=low/medium/xhigh" not in out or "不存在" not in out
+    assert "`/fast`" not in out or "不存在" not in out
+
+
+def test_rollup_prompt_skips_footer():
+    text = "工程师 [done]。关 think 只能走 chat_template_kwargs，`/fast` 可关 think。"
+    assert (
+        maybe_annotate_report(
+            "【系统·编制自动回调】工单已全部结束。1. 总结论",
+            text,
+            ["crew_steward", "file_read"],
+        )
+        == text
+    )

@@ -183,6 +183,148 @@ def build_compact_continuation_message(
     return "\n".join(parts).strip()
 
 
+
+_PRIOR_TURN_TOOLS_MARK = "[prior turn tools]"
+_PRIOR_TURN_MAX_LINES = 20
+
+
+def _tool_name_from_call(tc: Any) -> str:
+    if not isinstance(tc, dict):
+        return "tool"
+    fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+    name = (fn or {}).get("name") or tc.get("name") or "tool"
+    return str(name).strip() or "tool"
+
+
+def _one_line_outcome(content: Any, limit: int = 72) -> str:
+    s = " ".join(str(content or "").split())
+    if not s:
+        return "ok"
+    if len(s) > limit:
+        return s[: limit - 1] + "…"
+    return s
+
+
+def collapse_prior_turn_tool_traces(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Replace completed prior-turn assistant+tool pairs with a short summary.
+
+    Keeps the latest user turn (from the last ``user`` message on) intact so
+    the in-flight tool chain stays valid. Earlier turns keep user text and
+    final assistant replies; raw tool traces become
+    ``[prior turn tools] name: outcome``.
+    """
+    if not messages or len(messages) < 4:
+        return messages, 0
+    last_user = -1
+    for i, m in enumerate(messages):
+        if isinstance(m, dict) and m.get("role") == "user":
+            last_user = i
+    if last_user <= 0:
+        return messages, 0
+    prior = messages[:last_user]
+    latest = messages[last_user:]
+    prior_tools = 0
+    for m in prior:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "tool" or (m.get("role") == "assistant" and m.get("tool_calls")):
+            prior_tools += 1
+    if prior_tools < 1:
+        return messages, 0
+
+    out: list[dict[str, Any]] = []
+    pending: list[tuple[str, str]] = []
+
+    def flush() -> None:
+        nonlocal pending
+        if not pending:
+            return
+        lines: list[str] = []
+        extra = 0
+        for name, outcome in pending:
+            if len(lines) < _PRIOR_TURN_MAX_LINES:
+                lines.append(f"- {name}: {outcome}")
+            else:
+                extra += 1
+        if extra:
+            lines.append(f"- … +{extra} more")
+        out.append(
+            {
+                "role": "assistant",
+                "content": (
+                    f"{_PRIOR_TURN_TOOLS_MARK} ×{len(pending)}\n" + "\n".join(lines)
+                ),
+            }
+        )
+        pending = []
+
+    i = 0
+    n_prior = len(prior)
+    while i < n_prior:
+        m = prior[i]
+        if not isinstance(m, dict):
+            flush()
+            out.append(m)  # type: ignore[arg-type]
+            i += 1
+            continue
+        role = m.get("role")
+        tcs = m.get("tool_calls")
+        if role == "assistant" and tcs:
+            id_to_name: dict[str, str] = {}
+            if isinstance(tcs, dict):
+                inner = tcs.get("calls") or tcs.get("tool_calls") or []
+                tcs_iter = inner if isinstance(inner, list) else []
+            else:
+                tcs_iter = tcs if isinstance(tcs, list) else []
+            for tc in tcs_iter:
+                if not isinstance(tc, dict):
+                    continue
+                name = _tool_name_from_call(tc)
+                tid = tc.get("id")
+                if tid:
+                    id_to_name[str(tid)] = name
+            i += 1
+            saw_result = False
+            while i < n_prior:
+                nxt = prior[i]
+                if not isinstance(nxt, dict) or nxt.get("role") != "tool":
+                    break
+                tid = nxt.get("tool_call_id")
+                name = id_to_name.get(str(tid) if tid else "", "") or "tool"
+                pending.append((name, _one_line_outcome(nxt.get("content"))))
+                saw_result = True
+                i += 1
+            if not saw_result:
+                names = list(id_to_name.values()) or [
+                    _tool_name_from_call(tc)
+                    for tc in tcs_iter
+                    if isinstance(tc, dict)
+                ]
+                for name in names:
+                    pending.append((name, "(no result)"))
+            continue
+        if role == "tool":
+            pending.append(
+                (
+                    str(m.get("name") or m.get("tool_name") or "tool"),
+                    _one_line_outcome(m.get("content")),
+                )
+            )
+            i += 1
+            continue
+        flush()
+        out.append(m)
+        i += 1
+    flush()
+    collapsed = out + list(latest)
+    removed = max(0, len(messages) - len(collapsed))
+    if removed <= 0:
+        return messages, 0
+    return collapsed, removed
+
+
 class PipelineContextEngine(ContextEngine):
     def __init__(self, *, profile: Any | None = None) -> None:
         self.profile = profile
@@ -502,9 +644,12 @@ class PipelineContextEngine(ContextEngine):
         }
         return head + [marker] + tail, dropped
 
+    # ── prior-turn tool collapse (L1) ───────────────────────────────
+
     # ── L1 ──────────────────────────────────────────────────────────
 
     def _l1_budget(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+        messages, collapsed_n = collapse_prior_turn_tool_traces(messages)
         limit = self.max_tool_output_chars
         # Mid-zone (outside protect tail) gets a tighter cap — Codex/Claude style
         mid_limit = max(800, min(limit, int(limit * 0.35) or 1500))
@@ -558,7 +703,7 @@ class PipelineContextEngine(ContextEngine):
                     tcs.append(tc2)
                 m = {**m, "tool_calls": tcs}
             out.append(m)
-        return out, changed
+        return out, changed + collapsed_n
 
     # ── L3 (Claude Code microcompact) ───────────────────────────────
 

@@ -208,7 +208,7 @@ async def install_mcp_from_store(
         # 安装失败自动收束：DB 已写，但勿诱导 UI/agent 立刻连环重装
         msg += (
             f" · 运行时挂载失败: {runtime_err or 'unknown'}。"
-            f"【自动收束】配置已保存；请检查网络/URL/timeout 后再点「重新加载 MCP」，"
+            f"【自动收束】配置已保存；请按失败原因处理（缺命令/网络/URL/timeout），再点「重新加载 MCP」，"
             f"勿反复卸载重装同一 server。"
         )
     return MCPStoreInstallResponse(

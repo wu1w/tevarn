@@ -917,6 +917,78 @@ async def ensure_oauth_token_fresh(catalog: dict[str, Any], provider_id: str | N
     return normalize_catalog(cat)
 
 
+def catalog_active_api_key(catalog: dict[str, Any]) -> str:
+    """当前激活供应商的明文 API Key / OAuth access token。"""
+    cat = normalize_catalog(catalog)
+    pid = str(cat.get("active_provider_id") or "")
+    provider = next((p for p in cat["providers"] if p.get("id") == pid), None)
+    if provider is None:
+        return ""
+    return _active_api_key(provider)
+
+
+async def persist_active_llm_settings(repo: Any, catalog: dict[str, Any]) -> None:
+    """把 catalog 当前激活供应商写回 settings 表的 llm_*，避免重启后又用旧 Key。"""
+    cat = normalize_catalog(catalog)
+    pid = str(cat.get("active_provider_id") or "")
+    provider = next((p for p in cat["providers"] if p.get("id") == pid), None)
+    if provider is None:
+        return
+    api_key = _active_api_key(provider)
+    model = str(cat.get("active_model") or provider.get("active_model") or "")
+    if provider.get("llm_provider"):
+        await repo.upsert("llm_provider", provider["llm_provider"], CATALOG_CATEGORY)
+    if provider.get("llm_base_url"):
+        await repo.upsert("llm_base_url", provider["llm_base_url"], CATALOG_CATEGORY)
+    if model:
+        await repo.upsert("llm_model", model, CATALOG_CATEGORY)
+    if api_key:
+        await repo.upsert("llm_api_key", api_key, CATALOG_CATEGORY)
+    if pid:
+        await repo.upsert("llm_catalog_provider_id", pid, CATALOG_CATEGORY)
+
+
+async def sync_oauth_runtime(
+    catalog: dict[str, Any],
+    *,
+    repo: Any | None = None,
+    key_before: str = "",
+    persist_catalog: bool = False,
+) -> bool:
+    """OAuth 刷新或 runtime 与 catalog 分叉时，对齐内存 + llm_* 落盘。
+
+    设置页拉模型目录会 refresh token 只写 catalog，聊天热路径若走全局
+    单例就会继续用过期 Key（表现为 api.x.ai 403）。这里在 key 变化或
+    与 settings.llm_api_key 不一致时同步。
+    """
+    cat = normalize_catalog(catalog)
+    key = catalog_active_api_key(cat)
+    if not key:
+        return False
+    from backend.core.config import settings as _s
+
+    runtime_key = str(getattr(_s, "llm_api_key", "") or "")
+    refreshed = str(key) != str(key_before or "")
+    diverged = str(key) != runtime_key
+    if not refreshed and not diverged:
+        return False
+    if persist_catalog and repo is not None:
+        try:
+            await save_catalog(repo, cat)
+        except Exception as e:
+            logger.debug("persist refreshed oauth catalog failed: %s", e)
+    if repo is not None:
+        try:
+            await persist_active_llm_settings(repo, cat)
+        except Exception as e:
+            logger.debug("persist refreshed oauth llm_* failed: %s", e)
+    try:
+        apply_active_to_runtime(cat)
+    except Exception as e:
+        logger.debug("apply refreshed oauth to runtime failed: %s", e)
+    return True
+
+
 def apply_active_to_runtime(catalog: dict[str, Any]) -> list[str]:
     """把 active provider+credential+model 写到内存 settings 并重置 LLM 工厂。"""
     from backend.core.model_limits import limits_for_model

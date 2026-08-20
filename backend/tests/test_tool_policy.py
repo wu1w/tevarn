@@ -225,5 +225,32 @@ def test_repo_review_url_is_coding_not_thin_chat():
     assert "coding" in plan.packs
     assert is_thin_chat_intent("在吗") is True
     assert is_thin_chat_intent("你好") is True
+    rollup = (
+        "【系统·编制自动回调】你派发的「Qwen3.8」相关工单已全部结束。\n"
+        "请立即用简短中文汇报（勿再开长工具链）。\n"
+        + ("交卷写 qwen38-bare-probe-report.md。\n" * 20)
+    )
+    assert is_thin_chat_intent(rollup) is True
     # trending github is still casual, not a repo URL review
     assert looks_like_repo_task("查一下 github 的热门项目") is False
+
+
+
+def test_auto_resume_mcp_goal_keeps_manage_goal():
+    from backend.agent.tool_policy import is_mcp_ops_intent, resolve_enabled_tool_names
+    from backend.services.config_intent import detect_mcp_micro_loop
+
+    resume = (
+        "[System auto-resume] Continue the unfinished Goal; do not redo completed steps.\n"
+        "Call manage_goal(action=get) for progress.\n\n"
+        "Goal: 修好 Tavily MCP Key\n"
+        "- 核对 tavily MCP 配置\n"
+    )
+    assert is_mcp_ops_intent(resume) is False
+    assert detect_mcp_micro_loop(resume) is None
+    names, _plan = resolve_enabled_tool_names(
+        mode="goal", profile="dynamic", user_input=resume,
+        extra=["manage_goal", "crew_steward"],
+    )
+    assert names is not None
+    assert "manage_goal" in names

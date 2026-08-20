@@ -55,3 +55,19 @@ async def test_steward_allows_command_with_command_cap():
         "command", identity_capabilities=["file_rw", "command"]
     )
     assert d == "allow"
+
+
+@pytest.mark.asyncio
+async def test_steward_allows_result_load_via_file_read_or_rw():
+    d, why = await steward_decide_tool(
+        "result_load", identity_capabilities=["file_read"]
+    )
+    assert d == "allow", why
+    d2, why2 = await steward_decide_tool(
+        "result_load", identity_capabilities=["file_rw"]
+    )
+    assert d2 == "allow", why2
+    d3, _ = await steward_decide_tool(
+        "result_load", identity_capabilities=["command"]
+    )
+    assert d3 == "deny"

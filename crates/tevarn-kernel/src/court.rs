@@ -840,6 +840,18 @@ mod tests {
     }
 
     #[test]
+    fn steward_allows_result_load_with_file_read() {
+        let policy = CourtPolicy::default();
+        let args = json!({
+            "_workforce": true,
+            "_identity_capabilities": ["file_read"],
+        });
+        let d = decide_tool("result_load", Some(&args), &policy, None, None, None);
+        assert_eq!(d.layer, "steward");
+        assert_eq!(d.verdict, "allow");
+    }
+
+    #[test]
     fn mcp_prefix_allowlisted() {
         let policy = CourtPolicy::default();
         let d = decide_tool("mcp_github_search", Some(&json!({})), &policy, None, None, None);

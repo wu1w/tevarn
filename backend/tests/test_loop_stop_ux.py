@@ -18,6 +18,7 @@ def test_chat_exit_copy_has_no_operator_leak():
         "stopped_by_user",
         "kernel_budget_precheck",
         "empty_content_thrash",
+        "llm_visible_idle",
         "host_down",
     ):
         msg = format_exit_user_message(code, process_id="proc-secret")

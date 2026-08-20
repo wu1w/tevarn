@@ -68,6 +68,12 @@ _EXIT_CATALOG: dict[str, tuple[str, str, str, str]] = {
         "重试同一问题，或换一种说法。",
         "warn",
     ),
+    "llm_visible_idle": (
+        "思考时间过长",
+        "模型思考时间过长，本轮先停。发送「继续」可接着做。",
+        "可缩小上下文或拆小任务后重试。",
+        "warn",
+    ),
     "max_tool_rounds": (
         "本轮步数已用完",
         "本轮步数已经用完，已根据现有结果给出答复。",

@@ -599,6 +599,26 @@ class InboxService:
                 pass
         return n
 
+    async def attach_process_id(self, item_id: Any, process_id: str) -> None:
+        """Bind live kernel process to a claimed inbox job (jobs/running)."""
+        pid = str(process_id or "").strip()
+        if not pid:
+            return
+        from backend.models.agent_identity import AgentInboxItem
+
+        async with self._session_factory() as session:
+            item = (
+                await session.execute(
+                    select(AgentInboxItem).where(AgentInboxItem.id == _uuid.UUID(str(item_id)))
+                )
+            ).scalar_one_or_none()
+            if item is None:
+                return
+            if str(getattr(item, "status", "") or "") not in {"claimed", "pending"}:
+                return
+            item.process_id = pid
+            await session.commit()
+
     async def attach_run_id(self, item_id: Any, run_id: Any, *, origin: str | None = None) -> None:
         """Phase 2.2：工单 payload 关联 AgentRun id（/runs 互查）。"""
         from backend.models.agent_identity import AgentInboxItem

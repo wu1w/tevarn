@@ -4,6 +4,7 @@ from backend.agent.thinking_format import wrap_thinking
 from backend.agent.user_channel import (
     content_for_chat_persist,
     looks_like_complete_final_answer,
+    looks_like_in_progress_narration,
     looks_like_progress_note,
     should_stop_wrapup_redraft,
     user_visible_content,
@@ -92,3 +93,77 @@ def test_ensure_user_facing_final_strips_thinking():
     out = ensure_user_facing_final(raw, user_input="在吗")
     assert out == "可见答复"
     assert "<thinking>" not in out
+
+
+def test_user_visible_escapes_backticked_think_and_keeps_tail():
+    """Old frontend ate everything after a documented `<think>` mention."""
+    tail = "KEEP_TAIL_SECTION_AFTER_THINK_MENTION"
+    prose = (
+        "上次被截断了，这里补完整版。\n\n"
+        "## 2. 模型层\n\n"
+        "把更早的 `<think>` 从发给模型的历史里删掉\n"
+        "闭合的 `</think>` 也不该吞掉后文\n\n"
+        "## 3. 体验层：即使用户仍在看思考块\n\n"
+        f"{tail}\n\n"
+        "## 4. 下一步\n"
+        "## 5. Hermes 配置\n"
+        "请贴你的 Hermes 配置。"
+    )
+    out = user_visible_content(prose)
+    assert tail in out
+    assert "## 5. Hermes 配置" in out
+    assert "请贴你的 Hermes 配置。" in out
+    assert out.index(tail) > out.index("&lt;think")
+    # no raw opener left for parseMessageContent /<think\\b/ to eat
+    assert "<think" not in out
+    assert "<thinking" not in out
+    assert "</think" not in out
+    assert "&lt;think" in out
+    assert "&lt;/think" in out
+
+
+def test_user_visible_strips_leaked_stop_tokens():
+    raw = "官方仓库正文再核一下核心循环和许可，避免只凭摘要下结论。\n<|eos|>"
+    out = user_visible_content(raw)
+    assert "<|eos|>" not in out
+    assert "<|endoftext|>" not in user_visible_content("ok <|endoftext|>")
+    assert "<|im_end|>" not in user_visible_content("ok <|im_end|>")
+    assert "<|eot_id|>" not in user_visible_content("ok <|eot_id|>")
+    assert "核心循环" in out
+
+
+def test_user_visible_strips_file_start_wrap_and_progress():
+    raw = (
+        "官网和仓库已定位。接着抽 Qwen Code 文档里本地模型 / 小模型相关章节，"
+        "避免只凭营销文案下结论。\n"
+        "<file_start>官网和仓库已定位。接着抽 Qwen Code 文档里本地模型 / 小模型相关章节，"
+        "避免只凭营销文案下结论。\n<file_end><|eos|>"
+    )
+    out = user_visible_content(raw)
+    assert "<file_start>" not in out
+    assert "<file_end>" not in out
+    assert "<|eos|>" not in out
+    assert "官网和仓库已定位" in out
+    assert out.count("官网和仓库已定位") == 1
+    assert looks_like_progress_note(raw)
+
+
+def test_user_visible_strips_unique_call_id_dump():
+    raw = (
+        "先读官方仓库和文档正文，再下结论。不重复搜。\n"
+        "<|uniquecall_id|>5</uniquecall_id>result_load<|uniqueid|>id</uniqueid>"
+        "74e40399be6848e3</uniquecall>"
+    )
+    out = user_visible_content(raw)
+    assert "uniquecall" not in out.lower()
+    assert "74e40399be6848e3" not in out
+    assert "先读官方仓库" in out
+
+
+def test_short_factual_answer_is_not_in_progress_narration():
+    """Freeze path: '文件内容是 X' must still finalize (not a progress aside)."""
+    assert looks_like_in_progress_narration("文件内容是 X") is False
+    assert looks_like_in_progress_narration("在的，有什么事？") is False
+    assert looks_like_in_progress_narration("正在读取仓库关键文件…") is True
+    assert looks_like_in_progress_narration("接着抽官方仓库正文再核。") is True
+

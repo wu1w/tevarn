@@ -114,4 +114,28 @@ const failed = prepareMessagesForDisplay([
 ]);
 assert.equal(failed[0].tool_calls[0].status, 'failed');
 
+function isErrorContent(content) {
+  if (!content) return false;
+  const s = content.trim();
+  return (
+    /^\[Error\]/i.test(s) ||
+    /^\[LLM Error/i.test(s) ||
+    /^Error:/i.test(s) ||
+    /^LLM Error/i.test(s) ||
+    /^错误[:：]/u.test(s) ||
+    (/\b401\b/.test(s) && /unauthor/i.test(s)) ||
+    /LLM service failed/i.test(s)
+  );
+}
+
+assert.equal(isErrorContent('[Error] boom'), true);
+assert.equal(isErrorContent('[LLM Error] timeout'), true);
+assert.equal(isErrorContent('错误：鉴权失败'), true);
+assert.equal(
+  isErrorContent('只留最后一次成功/最后一次错误。上一步工具错误的关键字段。'),
+  false,
+  'analysis mentioning 错误 must not paint the bubble red',
+);
+assert.equal(isErrorContent('Same-turn recall is cheaper than compact.'), false);
+
 console.log('chatDisplay pairing: PASS');

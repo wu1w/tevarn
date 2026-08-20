@@ -20,7 +20,6 @@ export function TitleBar({
   wsState = 'connected',
   retryCount = 0,
   onReconnect,
-  title = 'Tevarn',
 }: TitleBarProps) {
   const t = useT();
   const [isElectron, setIsElectron] = useState(false);
@@ -61,10 +60,8 @@ export function TitleBar({
   // 左侧只放文字：圆形 logo 已在 IconRail 顶部，这里再画一个会「双 logo」叠影。
   return (
     <header className="titlebar relative z-50 flex h-11 flex-shrink-0 items-center select-none border-b border-border-subtle/80 bg-chrome/90 backdrop-blur-xl">
-      {/* 左侧：品牌文字（与 rail 宽度对齐；logo 归 IconRail） */}
-      <div className="flex h-full w-60 flex-shrink-0 items-center gap-2.5 px-4">
-        <span className="text-[13px] font-semibold tracking-tight text-foreground/90">{title}</span>
-      </div>
+      {/* 左侧留空：给 macOS 红绿灯和拖拽，不再放品牌字 */}
+      <div className="titlebar-brand h-full w-60 flex-shrink-0" />
 
       {/* 中间拖拽区 */}
       <div className="flex h-full flex-1 items-center justify-center">
@@ -138,9 +135,6 @@ export function TitleBar({
           </div>
         )}
 
-        {isElectron && platform === 'darwin' && (
-          <div className="w-16" /> /* macOS traffic lights 在左侧，留白平衡 */
-        )}
       </div>
     </header>
   );

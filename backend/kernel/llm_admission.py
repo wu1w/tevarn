@@ -48,11 +48,12 @@ def _prefer_rust_only() -> bool:
     )
 
 
-def _sync_config_to_rust(k: Any) -> None:
+async def _sync_config_to_rust(k: Any) -> None:
     try:
         from backend.core.config import settings
 
-        k._call(
+        await asyncio.wait_for(
+            k._acall(
             "llm_set_config",
             {
                 "max_in_flight": max(1, int(getattr(settings, "llm_max_in_flight", 4) or 4)),
@@ -74,6 +75,8 @@ def _sync_config_to_rust(k: Any) -> None:
                     int(getattr(settings, "llm_daily_token_budget_per_identity", 0) or 0),
                 ),
             },
+            ),
+            timeout=3.0,
         )
     except Exception as e:
         logger.debug("llm_set_config skip: %s", e)
@@ -160,8 +163,11 @@ class LlmAdmissionController:
         k = _rust_kernel()
         if k is not None:
             if not self._rust_config_pushed:
-                _sync_config_to_rust(k)
-                self._rust_config_pushed = True
+                try:
+                    await _sync_config_to_rust(k)
+                    self._rust_config_pushed = True
+                except Exception as e:
+                    logger.warning("llm_set_config failed: %s", e)
             return await self._acquire_rust(k, req)
 
         if _prefer_rust_only():
@@ -189,8 +195,15 @@ class LlmAdmissionController:
         rid = str(req.request_id or "")
         granted = False
         try:
-            # audit-fix: async 上下文走 _acall，避免阻塞事件循环
-            r = await k._acall("llm_try_acquire", params) or {}
+            logger.info(
+                "llm_try_acquire identity=%s process=%s source=%s",
+                req.identity_id,
+                req.process_id,
+                req.source,
+            )
+            r = await asyncio.wait_for(
+                k._acall("llm_try_acquire", params), timeout=8.0
+            ) or {}
             status = r.get("status")
             rid = str(r.get("request_id") or req.request_id or rid)
             if status == "granted":
@@ -238,9 +251,24 @@ class LlmAdmissionController:
                     "backend": "rust",
                 },
             )
+            logger.info(
+                "llm admission queued rid=%s reason=%s qlen=%s",
+                rid,
+                r.get("reason"),
+                r.get("queue_len"),
+            )
             deadline = time.time() + self._grant_timeout
+            _last_qlog = 0.0
             while time.time() < deadline:
                 await asyncio.sleep(0.05)
+                now = time.time()
+                if now - _last_qlog >= 5.0:
+                    logger.info(
+                        "llm admission still queued rid=%s waited=%.0fs",
+                        rid,
+                        now - (deadline - self._grant_timeout),
+                    )
+                    _last_qlog = now
                 polled = await k._acall("llm_poll", {"request_id": rid}) or {}
                 st = polled.get("status")
                 if st == "granted":
@@ -566,9 +594,6 @@ class LlmAdmissionController:
         k = _rust_kernel()
         if k is not None:
             try:
-                if not self._rust_config_pushed:
-                    _sync_config_to_rust(k)
-                    self._rust_config_pushed = True
                 return k._call("llm_status") or {"backend": "rust", "error": "empty"}
             except Exception as e:
                 logger.debug("llm_status rust: %s", e)

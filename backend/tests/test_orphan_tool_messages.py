@@ -284,3 +284,72 @@ async def test_l5_no_orphan_tool_after_compact(monkeypatch):
         and str(m["tool_call_id"]) not in declared
     ]
     assert orphans == [], f"L5 压缩后仍存在孤儿 tool 消息: {orphans}"
+
+
+
+def test_sanitize_reasoning_warning_once_not_per_message(caplog):
+    """Missing reasoning must warn once per request, not once per historical row."""
+    import logging
+
+    messages = [{"role": "user", "content": "再复测"}]
+    for i in range(12):
+        messages.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": f"call_hist_{i}",
+                        "type": "function",
+                        "function": {"name": "pytest", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
+        messages.append(
+            {"role": "tool", "tool_call_id": f"call_hist_{i}", "content": "ok"}
+        )
+    with caplog.at_level(logging.WARNING):
+        _sanitize(messages)
+    warns = [
+        r
+        for r in caplog.records
+        if "without reasoning_content" in r.getMessage()
+    ]
+    assert len(warns) == 1, f"expected 1 warning, got {len(warns)}: {[r.getMessage() for r in warns]}"
+    assert "x12" in warns[0].getMessage()
+
+
+def test_sanitize_uses_stashed_reasoning_no_warning(caplog):
+    import logging
+
+    from backend.agent.thinking_format import (
+        TEVARN_REASONING_KEY,
+        stash_reasoning_in_tool_calls,
+    )
+
+    calls = stash_reasoning_in_tool_calls(
+        [
+            {
+                "id": "call_ok",
+                "type": "function",
+                "function": {"name": "file_read", "arguments": "{}"},
+            }
+        ],
+        "read the file first",
+    )
+    messages = [
+        {"role": "assistant", "content": None, "tool_calls": calls},
+        {"role": "tool", "tool_call_id": "call_ok", "content": "hi"},
+    ]
+    with caplog.at_level(logging.WARNING):
+        out = _sanitize(messages)
+    warns = [
+        r
+        for r in caplog.records
+        if "without reasoning_content" in r.getMessage()
+    ]
+    assert warns == []
+    asst = [m for m in out if m.get("role") == "assistant"][0]
+    assert asst.get("reasoning_content") == "read the file first"
+    assert TEVARN_REASONING_KEY not in (asst.get("tool_calls") or [{}])[0]

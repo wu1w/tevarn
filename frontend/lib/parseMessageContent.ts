@@ -6,6 +6,7 @@
  * - [Thinking]...[/Thinking] / 【思考】...【/思考】
  *
  * 注意：切勿使用字符类 /[Thinking]/ —— 会把 agent、Unauthorized 等词里的字母误判为标签。
+ * 围栏代码与行内 `...` 会先遮罩，避免文中提到的 `<think>` 被当成未闭合思考块。
  */
 
 export interface ParsedMessageContent {
@@ -28,6 +29,28 @@ const PAIR_TAGS: TagPair[] = [
   { open: /【思考】/, close: /【\/思考】/ },
 ];
 
+const CODE_MASK_RE = /\x00TEVARN_CODE_(\d+)\x00/g;
+
+function maskCodeSpans(text: string): { text: string; held: string[] } {
+  const held: string[] = [];
+  const hold = (m: string) => {
+    held.push(m);
+    return `\x00TEVARN_CODE_${held.length - 1}\x00`;
+  };
+  // Fresh regexes each call so /g lastIndex cannot leak across messages.
+  let s = text.replace(/```[\s\S]*?```/g, hold);
+  s = s.replace(/``[^`\n]*``/g, hold);
+  s = s.replace(/`[^`\n]+`/g, hold);
+  return { text: s, held };
+}
+
+function unmaskCodeSpans(text: string, held: string[]): string {
+  return text.replace(CODE_MASK_RE, (m, i: string) => {
+    const idx = Number(i);
+    return idx >= 0 && idx < held.length ? held[idx] : m;
+  });
+}
+
 export function parseMessageContent(raw: string | null | undefined): ParsedMessageContent {
   if (!raw) {
     return { thinking: null, body: '', thinkingOpen: false };
@@ -36,7 +59,7 @@ export function parseMessageContent(raw: string | null | undefined): ParsedMessa
   const thinkingParts: string[] = [];
   let thinkingOpen = false;
 
-  // fenced thinking
+  // fenced thinking (real CoT fences) — extract before masking remaining code
   text = text.replace(
     /```(?:thinking|thought|reasoning)\s*\n([\s\S]*?)```/gi,
     (_m, inner: string) => {
@@ -44,6 +67,10 @@ export function parseMessageContent(raw: string | null | undefined): ParsedMessa
       return '';
     }
   );
+
+  const masked = maskCodeSpans(text);
+  text = masked.text;
+  const held = masked.held;
 
   for (const { open: openRe, close: closeRe } of PAIR_TAGS) {
     // 完整标签对（非贪婪）
@@ -72,7 +99,8 @@ export function parseMessageContent(raw: string | null | undefined): ParsedMessa
     }
   }
 
-  const thinking = thinkingParts.filter(Boolean).join('\n\n') || null;
-  const body = text.replace(/^\s*\n+/, '').trimEnd();
+  const thinking =
+    unmaskCodeSpans(thinkingParts.filter(Boolean).join('\n\n'), held) || null;
+  const body = unmaskCodeSpans(text.replace(/^\s*\n+/, '').trimEnd(), held);
   return { thinking, body, thinkingOpen };
 }

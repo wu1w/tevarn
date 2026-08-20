@@ -123,3 +123,71 @@ async def test_broadcast_ingests_even_without_ws():
     snap = m.get_run_snapshot(sid)
     assert snap is not None
     assert "bg" in snap.partial_content
+
+
+def test_idle_tombstone_beats_unwinding_task():
+    """Idle from the loop must not stay 'running' just because the task is unwinding."""
+    import asyncio
+
+    m = ConnectionManager()
+    sid = uuid.uuid4()
+    m.begin_run_snapshot(sid)
+
+    async def _linger():
+        await asyncio.sleep(60)
+
+    task = asyncio.get_event_loop().create_task(_linger()) if False else None
+    # Register a not-done dummy by using a Future-like: track via _agent_tasks
+    class _Fake:
+        def done(self):
+            return False
+        def add_done_callback(self, cb):
+            self._cb = cb
+        def cancel(self):
+            pass
+    fake = _Fake()
+    m._agent_tasks[sid] = fake  # type: ignore[assignment]
+    assert m.has_running_agent(sid) is True
+    m._ingest_run_event(sid, {"type": "status", "state": "idle", "detail": "Ready"})
+    snap = m.get_run_snapshot(sid)
+    assert snap is not None
+    assert snap.state == "idle"
+    assert snap.agent_running is False
+    # sync-style: idle wins
+    running = m.has_running_agent(sid)
+    if snap is not None and snap.state in ("idle", "error"):
+        running = False
+    assert running is False
+    m._agent_tasks.pop(sid, None)
+
+
+def test_live_thinking_snap_not_hidden_by_idle_label():
+    """Live agent + agent_running snap stays running even if state string is idle."""
+    m = ConnectionManager()
+    sid = uuid.uuid4()
+    m.begin_run_snapshot(sid)
+
+    class _Fake:
+        def done(self):
+            return False
+
+        def add_done_callback(self, cb):
+            pass
+
+        def cancel(self):
+            pass
+
+    m._agent_tasks[sid] = _Fake()  # type: ignore[assignment]
+    snap = m.get_run_snapshot(sid)
+    assert snap is not None
+    snap.state = "idle"
+    snap.agent_running = True
+    running = m.has_running_agent(sid)
+    if (
+        snap is not None
+        and str(getattr(snap, "state", "") or "") in ("idle", "error")
+        and not bool(getattr(snap, "agent_running", False))
+    ):
+        running = False
+    assert running is True
+    m._agent_tasks.pop(sid, None)

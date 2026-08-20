@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { chatWsHandlers, useChatWsBridge } from '@/stores/chatWsBridge';
+import { streamSessionApi } from '@/stores/streamSessionStore';
 import type {
   StreamDeltaMessage,
   StatusUpdateMessage,
@@ -41,6 +42,20 @@ export function GlobalChatWs() {
       chatWsHandlers().onContentReset?.(msg);
     },
     onStatusUpdate: (msg: StatusUpdateMessage) => {
+      // AppShell 常驻：即使 /chat 正在换 handler / 已卸载，也要把 idle 写入 store，
+      // 否则切回会话会把残留 tools/content 当成「还在思考」。
+      const sid = String(msg.session_id || sessionId || '');
+      if (sid) {
+        if (msg.state === 'idle' || msg.state === 'error') {
+          streamSessionApi().markIdle(sid);
+        } else if (
+          msg.state === 'thinking' ||
+          msg.state === 'tool_executing' ||
+          msg.state === 'optimizing'
+        ) {
+          streamSessionApi().markRunning(sid, msg.detail || null);
+        }
+      }
       chatWsHandlers().onStatusUpdate?.(msg);
     },
     onSyncResponse: (payload) => {
@@ -59,6 +74,14 @@ export function GlobalChatWs() {
       chatWsHandlers().onToolEvent?.(msg);
     },
     onRunEvent: (msg: RunEventMessage) => {
+      const ev = String(msg.event || msg.topic || '');
+      const sid = String(msg.session_id || sessionId || '');
+      if (
+        sid &&
+        (ev === 'run.completed' || ev === 'run.cancelled' || ev === 'run.failed')
+      ) {
+        streamSessionApi().markIdle(sid);
+      }
       chatWsHandlers().onRunEvent?.(msg);
     },
     onGoalUpdate: (msg: GoalUpdateMessage) => {

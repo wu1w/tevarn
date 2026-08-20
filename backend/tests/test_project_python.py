@@ -57,3 +57,15 @@ def test_rewrite_respects_tevarn_python_env(monkeypatch, tmp_path: Path) -> None
     new, changed = rewrite_command_python("python -c pass")
     assert changed is True
     assert str(fake.resolve()) in new or f'"{fake.resolve()}"' in new
+
+
+def test_rewrite_skips_heredoc_delimiter() -> None:
+    """Heredoc closer PY must not be rewritten as the Windows py launcher."""
+    cmd = "python3 - <<'PY'\nprint(1)\nPY\n"
+    new, changed = rewrite_command_python(cmd)
+    assert changed is True
+    py = resolve_project_python()
+    assert new.count(py) == 1 or new.count(f'"{py}"') == 1
+    assert new.rstrip().endswith("PY")
+    assert "print(1)" in new
+    assert "\nPY" in new or new.endswith("PY\n")

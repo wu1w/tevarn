@@ -166,11 +166,20 @@ let backendProcess: ChildProcess | null = null;
 let kernelHostProcess: ChildProcess | null = null;
 /** OS: full quit kills Kernel only when true. Default false = detach runtime. */
 let stopRuntimeOnQuit = false;
+/** unset = Dock / Cmd+Q / 注销，尚未经过托盘菜单。 */
+let quitIntent: 'unset' | 'keep-runtime' | 'stop-runtime' = 'unset';
 let trayBadgeTimer: ReturnType<typeof setInterval> | null = null;
 let frontendServer: http.Server | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+
+function requestQuit(mode: 'keep-runtime' | 'stop-runtime'): void {
+  quitIntent = mode;
+  stopRuntimeOnQuit = mode === 'stop-runtime';
+  isQuitting = true;
+  app.quit();
+}
 
 function focusExistingWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1876,19 +1885,11 @@ function createTray(): void {
     { type: 'separator' },
     {
       label: 'Quit Console (keep AI running)',
-      click: () => {
-        stopRuntimeOnQuit = false;
-        isQuitting = true;
-        app.quit();
-      },
+      click: () => requestQuit('keep-runtime'),
     },
     {
       label: 'Stop AI Runtime & Quit',
-      click: () => {
-        stopRuntimeOnQuit = true;
-        isQuitting = true;
-        app.quit();
-      },
+      click: () => requestQuit('stop-runtime'),
     },
   ]);
 
@@ -2039,7 +2040,7 @@ function createWindow(): void {
     ...(platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset' as const,
-          trafficLightPosition: { x: 14, y: 12 },
+          trafficLightPosition: { x: 16, y: 14 },
         }
       : {}),
     webPreferences: {
@@ -2110,6 +2111,7 @@ function createWindow(): void {
   }, 10000);
 
   mainWindow.on('close', (event) => {
+    // 红点关窗：藏到托盘。Dock 退出 / Cmd+Q 会先走 before-quit 把 isQuitting 置位。
     if (!isQuitting) {
       event.preventDefault();
       mainWindow?.hide();
@@ -2479,6 +2481,8 @@ ipcMain.handle(
 
 ipcMain.handle('install-update', (event) => {
   assertTrustedIpc(event);
+  quitIntent = 'stop-runtime';
+  stopRuntimeOnQuit = true;
   isQuitting = true;
   autoUpdater?.quitAndInstall();
 });
@@ -2544,11 +2548,29 @@ app.on('window-all-closed', () => {
   // 托盘驻留，不因关窗退出
 });
 
+app.on('before-quit', () => {
+  // Dock「退出」/ Cmd+Q / 系统注销：必须先置位，否则窗口 close 会 preventDefault，
+  // 应用只藏到托盘，Dock 图标和进程都还在。
+  isQuitting = true;
+  if (quitIntent === 'unset') {
+    quitIntent = 'stop-runtime';
+    stopRuntimeOnQuit = true;
+  }
+});
+
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (trayBadgeTimer) {
     clearInterval(trayBadgeTimer);
     trayBadgeTimer = null;
+  }
+  if (tray) {
+    try {
+      tray.destroy();
+    } catch {
+      /* ignore */
+    }
+    tray = null;
   }
 
   if (stopRuntimeOnQuit && kernelHostProcess && !kernelHostProcess.killed) {

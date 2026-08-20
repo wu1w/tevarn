@@ -63,6 +63,11 @@ interface StreamSessionStore {
   markIdle: (sessionId: string) => void;
 }
 
+/** Only the running flags mean the agent is live. Leftover content/tools must not resume thinking. */
+export function isActiveStream(s: SessionStreamState | null | undefined): boolean {
+  return Boolean(s && (s.agentRunning || s.isStreaming));
+}
+
 export const useStreamSessionStore = create<StreamSessionStore>((set, get) => ({
   bySession: {},
 

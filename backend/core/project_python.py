@@ -15,10 +15,10 @@ from pathlib import Path
 
 logger = __import__("logging").getLogger(__name__)
 
-# 匹配命令开头或 shell 连接符后的 python / python3 / py -3
+# 匹配命令开头或 shell 连接符后的 python / python3 / py -3。
+# `python` 忽略大小写；裸 `py` 必须小写。IGNORECASE 会把 heredoc 结束符 PY 误替换。
 _PY_TOKEN = re.compile(
-    r"(?P<pre>^|[\n;&|]\s*)(?P<py>python3?|py(?:\s+-3)?)\b(?=\s|$)",
-    re.IGNORECASE,
+    r"(?P<pre>^|[\n;&|]\s*)(?P<py>(?i:python3?)|py(?:\s+-3)?)\b(?=\s|$)",
 )
 
 

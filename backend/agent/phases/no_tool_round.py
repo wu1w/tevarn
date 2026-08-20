@@ -176,8 +176,8 @@ async def run_no_tool_round(
                 try:
                     from backend.agent.pseudo_tool_recover import (
                         leak_nudge_text,
+                        leak_stop_final_text,
                         looks_like_pseudo_tool_content,
-                        scrub_leak_markers,
                     )
 
                     if looks_like_pseudo_tool_content(_body):
@@ -194,11 +194,17 @@ async def run_no_tool_round(
                                 "content": leak_nudge_text(streak=streak),
                             }
                         )
-                        result.action = "continue"
                         if streak >= 2:
                             result.force_final_no_tools = True
-                            result.final_content = scrub_leak_markers(_body)
-                            # 仍 continue 一轮让模型用文字收束；force_final 禁止再 tool
+                            result.action = "break"
+                            result.final_content = leak_stop_final_text(_body)
+                            logger.warning(
+                                "no_tool leak stop streak=%s session=%s",
+                                streak,
+                                session_id,
+                            )
+                            return result
+                        result.action = "continue"
                         logger.warning(
                             "no_tool blocked finalize on pseudo-tool leak streak=%s session=%s",
                             streak,
@@ -207,8 +213,140 @@ async def run_no_tool_round(
                         return result
                 except Exception as _lk_e:
                     logger.debug("pseudo leak gate in no_tool skip: %s", _lk_e)
+                # Mid-task progress / unread spill must not finalize as the answer.
+                try:
+                    from backend.agent.progress_guard import (
+                        UNREAD_HANDLE_NUDGE_MAX as _UH_MAX,
+                        unread_result_handles as _unread_hids,
+                    )
+                    from backend.agent.user_channel import (
+                        looks_like_complete_final_answer as _complete_final,
+                        looks_like_in_progress_narration as _progress_note,
+                        user_visible_content as _uvc,
+                    )
+
+                    _visible = _uvc(_body)
+                    if not _complete_final(_visible):
+                        _did_tools = int(last_tool_round_count or 0) > 0 or any(
+                            str(n or "").strip() for n in (tools_used_run or [])
+                        )
+                        _unread = _unread_hids(messages)
+                        _is_progress = _progress_note(_visible) or (
+                            len(_visible) < 120 and bool(_unread)
+                        )
+                        _recoverable_json = False
+                        try:
+                            from backend.agent.pseudo_tool_recover import (
+                                extract_pseudo_tool_calls as _ext_pt,
+                            )
+
+                            _recoverable_json = bool(_ext_pt(_body))
+                        except Exception:
+                            _recoverable_json = False
+                        _leak_body = False
+                        try:
+                            _leak_body = looks_like_pseudo_tool_content(_body)
+                        except Exception:
+                            _leak_body = False
+                        _already = bool(getattr(loop, "_progress_note_nudge", False))
+                        _uh_n = int(getattr(loop, "_unread_handle_nudge", 0) or 0)
+
+                        if _did_tools and _unread and _uh_n < int(_UH_MAX):
+                            _ids = ", ".join(f"`{h}`" for h in _unread[:4])
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "[System] Unread spilled tool results "
+                                        f"(handles: {_ids}). "
+                                        "`result_load` the most relevant 1–2, then write "
+                                        "the full answer. Do not stop with a progress "
+                                        "sentence. Do not emit stop tokens. "
+                                        "Reply in the user's language."
+                                    ),
+                                }
+                            )
+                            try:
+                                loop._unread_handle_nudge = _uh_n + 1
+                                loop._progress_note_nudge = True
+                            except Exception:
+                                pass
+                            result.action = "continue"
+                            result.force_final_no_tools = False
+                            logger.info(
+                                "unread-handle blocked finalize n=%s session=%s",
+                                _uh_n + 1,
+                                session_id,
+                            )
+                            return result
+                        if (
+                            _did_tools
+                            and _unread
+                            and _uh_n >= int(_UH_MAX)
+                            and not force_final_no_tools
+                        ):
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "[System] Still have unread spilled results, "
+                                        "but do not emit another progress sentence. "
+                                        "Write the full answer now from pages you "
+                                        "already loaded. No more tools. "
+                                        "Reply in the user's language."
+                                    ),
+                                }
+                            )
+                            try:
+                                loop._unread_handle_nudge = _uh_n + 1
+                            except Exception:
+                                pass
+                            result.action = "continue"
+                            result.force_final_no_tools = True
+                            logger.info(
+                                "unread-handle force_final after %s nudges session=%s",
+                                _uh_n,
+                                session_id,
+                            )
+                            return result
+
+                        _block = _did_tools and (
+                            _is_progress
+                            or _recoverable_json
+                            or _leak_body
+                        )
+                        if _block and not _already:
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "[System] Write the full answer from the tool "
+                                        "results you already have; do not stop with a "
+                                        "progress sentence. Do not emit stop tokens. "
+                                        "Reply in the user's language."
+                                    ),
+                                }
+                            )
+                            try:
+                                loop._progress_note_nudge = True
+                            except Exception:
+                                pass
+                            result.action = "continue"
+                            result.force_final_no_tools = False
+                            logger.info(
+                                "progress-note blocked finalize session=%s",
+                                session_id,
+                            )
+                            return result
+                except Exception as _pn_e:
+                    logger.debug("progress-note finalize gate skip: %s", _pn_e)
                 result.action = "break"
-                result.final_content = accumulated_content
+                try:
+                    from backend.agent.user_channel import user_visible_content as _uvc_f
+
+                    result.final_content = _uvc_f(accumulated_content)
+                except Exception:
+                    result.final_content = accumulated_content
                 try:
                     loop.last_exit_reason = "non_goal_text_final"
                 except Exception:

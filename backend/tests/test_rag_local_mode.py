@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from datetime import date
 
 from backend.agent.file_context import load_workspace_memory_bundle
@@ -86,3 +88,47 @@ def test_memory_bundle_loads_index_temp_dated(tmp_path):
     assert today in block
     assert meta["memory_md"]
     assert meta["memory_temp"]
+
+
+@pytest.mark.asyncio
+async def test_index_document_text_ready_not_error_when_rag_not_ready(monkeypatch):
+    """Builtin seeds / uploads must not become status=error just because embedding is empty."""
+    import uuid
+    from types import SimpleNamespace
+
+    from backend.core import config as cfg
+    from backend.services.knowledge import indexer
+    from backend.services.rag.capability import invalidate_rag_status_cache
+
+    invalidate_rag_status_cache()
+    monkeypatch.setattr(cfg.settings, "embedding_provider", "")
+    monkeypatch.setattr(cfg.settings, "embedding_model", "")
+    monkeypatch.setattr(cfg.settings, "embedding_base_url", "")
+    monkeypatch.setattr(cfg.settings, "qdrant_url", "")
+    monkeypatch.setattr(cfg.settings, "rag_enabled", True)
+
+    seen = {}
+
+    class _Repo:
+        def __init__(self, *a, **k):
+            pass
+
+        async def update_status(self, document_id, status):
+            seen["status"] = status
+            seen["id"] = document_id
+            return SimpleNamespace(id=document_id, status=status)
+
+    monkeypatch.setattr(indexer, "AsyncDocumentRepository", _Repo)
+    result = await indexer.index_document_text(
+        document_id=uuid.uuid4(),
+        title="seed",
+        text="# hello",
+        source="builtin-seed",
+        skip_wiki=True,
+    )
+    assert result.get("skipped") is True
+    assert result.get("ok") is True
+    assert result.get("chunks") == 0
+    assert seen.get("status") == "ready"
+    assert seen.get("status") != "error"
+

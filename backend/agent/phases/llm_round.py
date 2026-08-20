@@ -123,7 +123,20 @@ async def run_llm_round(
     _admission = get_llm_admission()
     _lease = None
     try:
-        _lease = await _admission.acquire(infer_request_from_loop(loop))
+        logger.info(
+            "LLM admission acquire session=%s",
+            str(session_id)[:8],
+        )
+        _lease = await asyncio.wait_for(
+            _admission.acquire(infer_request_from_loop(loop)),
+            timeout=15.0,
+        )
+    except TimeoutError:
+        logger.warning(
+            "LLM admission acquire timeout session=%s — skip gate",
+            str(session_id)[:8],
+        )
+        _lease = None
     except LlmAdmissionRejected as e:
         logger.warning("LLM admission rejected: %s", e)
         result.action = "break"
@@ -208,15 +221,66 @@ async def _run_llm_round_body(
         _stream = llm_service.chat(messages, tools=_iter_tools, stream=True)
         _ait = _stream.__aiter__()
         _pending: asyncio.Task | None = asyncio.create_task(_ait.__anext__())
-        # UX: long reasoning silence — status heartbeat (does not cancel SSE)
+        # UX: long reasoning silence — status heartbeat (does not cancel SSE).
+        # Heartbeat / idle-cap use *visible* progress only. reasoning_delta
+        # must not reset the timer or hide 8-minute think-only stalls.
         try:
             _hb_every = float(
                 getattr(settings, "agent_llm_stream_heartbeat_secs", 8.0) or 0.0
             )
         except Exception:
             _hb_every = 8.0
+        try:
+            _idle_cap = float(
+                getattr(settings, "agent_llm_round_visible_idle_secs", 120.0) or 0.0
+            )
+        except Exception:
+            _idle_cap = 120.0
+        try:
+            _round_cap = float(
+                getattr(settings, "agent_llm_round_max_seconds", 300.0) or 0.0
+            )
+        except Exception:
+            _round_cap = 300.0
         _stream_t0 = time.monotonic()
         _last_hb = _stream_t0
+        _last_visible = _stream_t0
+        _visible_idle = False
+
+        def _hit_round_cap(now: float) -> bool:
+            if _idle_cap > 0 and (now - _last_visible) >= _idle_cap:
+                return True
+            # Wall-clock only for think-only rounds. A live visible
+            # stream (long review) must not be cut mid-sentence.
+            if (
+                _round_cap > 0
+                and (now - _stream_t0) >= _round_cap
+                and not (accumulated_content or "").strip()
+                and not tool_calls
+            ):
+                return True
+            return False
+
+        async def _hb_or_idle() -> bool:
+            """Push thinking heartbeat. True if this round should stop."""
+            nonlocal _last_hb
+            now = time.monotonic()
+            if _hit_round_cap(now):
+                return True
+            if _hb_every > 0 and (now - _last_hb) >= _hb_every:
+                waited = int(now - _last_visible)
+                detail = (
+                    f"模型仍在思考…（已 {waited}s，尚无可见输出）"
+                    if not (accumulated_content or "").strip()
+                    else f"模型仍在生成…（已等待约 {int(now - _stream_t0)}s）"
+                )
+                try:
+                    await loop._push_status(session_id, "thinking", detail)
+                except Exception:
+                    pass
+                _last_hb = now
+            return False
+
         try:
             while True:
                 if loop._should_stop:
@@ -233,19 +297,19 @@ async def _run_llm_round_body(
                 assert _pending is not None
                 done, _ = await asyncio.wait({_pending}, timeout=0.4)
                 if not done:
-                    if _hb_every > 0:
-                        _now = time.monotonic()
-                        if _now - _last_hb >= _hb_every:
-                            _waited = int(_now - _stream_t0)
+                    if await _hb_or_idle():
+                        _visible_idle = True
+                        if _pending is not None and not _pending.done():
+                            _pending.cancel()
                             try:
-                                await loop._push_status(
-                                    session_id,
-                                    "thinking",
-                                    f"模型仍在生成…（已等待约 {_waited}s）",
-                                )
-                            except Exception:
+                                await _pending
+                            except (
+                                asyncio.CancelledError,
+                                StopAsyncIteration,
+                                Exception,
+                            ):
                                 pass
-                            _last_hb = _now
+                        break
                     continue  # still waiting for next SSE chunk
                 try:
                     chunk = _pending.result()
@@ -276,7 +340,6 @@ async def _run_llm_round_body(
                         pass
                     return result
                 _pending = asyncio.create_task(_ait.__anext__())
-                _last_hb = time.monotonic()  # any chunk resets silence timer
 
                 # Native reasoning: record for traces / next-turn reasoning_content.
                 # Do NOT push <thinking> onto the user stream.
@@ -293,13 +356,66 @@ async def _run_llm_round_body(
                 )
                 if _delta and not _err_chunk:
                     accumulated_content += _delta
-                    if not suppress_content_stream and not _pretool_retracted:
+                    _leak_now = False
+                    _loop_now = False
+                    try:
+                        from backend.agent.pseudo_tool_recover import (
+                            looks_like_pseudo_tool_content as _lk_st,
+                            looks_like_token_loop as _lk_lp,
+                            scrub_leak_markers as _sc_lp,
+                        )
+
+                        _leak_now = _lk_st(accumulated_content)
+                        _loop_now = _lk_lp(accumulated_content, _delta)
+                    except Exception:
+                        _leak_now = False
+                        _loop_now = False
+                    if _loop_now:
+                        logger.warning(
+                            "LLM token loop aborted session=%s tail=%r",
+                            session_id,
+                            (accumulated_content or "")[-48:],
+                        )
+                        try:
+                            from backend.agent.pseudo_tool_recover import (
+                                collapse_repetition_tail as _col_lp,
+                            )
+
+                            accumulated_content = _col_lp(_sc_lp(accumulated_content))
+                        except Exception:
+                            try:
+                                accumulated_content = _sc_lp(accumulated_content)
+                            except Exception:
+                                pass
+                        if not _pretool_retracted:
+                            _pretool_retracted = True
+                            await _retract_pretool_user_stream(
+                                loop,
+                                session_id=session_id,
+                                message_id=message_id,
+                                accumulated_content=accumulated_content,
+                            )
+                        break
+                    if _leak_now and not _pretool_retracted:
+                        _pretool_retracted = True
+                        await _retract_pretool_user_stream(
+                            loop,
+                            session_id=session_id,
+                            message_id=message_id,
+                            accumulated_content=accumulated_content,
+                        )
+                    elif not suppress_content_stream and not _pretool_retracted:
                         await loop._push_stream(
                             session_id, message_id, _delta
                         )
+                    if _delta.strip():
+                        _last_visible = time.monotonic()
+                        _last_hb = _last_visible
 
                 # 收集 tool call：收回已流出的抢答正文
                 if chunk.tool_call:
+                    _last_visible = time.monotonic()
+                    _last_hb = _last_visible
                     if not _pretool_retracted:
                         _pretool_retracted = True
                         await _retract_pretool_user_stream(
@@ -309,6 +425,20 @@ async def _run_llm_round_body(
                             accumulated_content=accumulated_content,
                         )
                     tool_calls.append(chunk.tool_call)
+
+                if await _hb_or_idle():
+                    _visible_idle = True
+                    if _pending is not None and not _pending.done():
+                        _pending.cancel()
+                        try:
+                            await _pending
+                        except (
+                            asyncio.CancelledError,
+                            StopAsyncIteration,
+                            Exception,
+                        ):
+                            pass
+                    break
 
                 # 真实用量（T4）：provider 回填时优先于粗估；合并 partial stream
                 _cu = getattr(chunk, "usage", None)
@@ -366,6 +496,31 @@ async def _run_llm_round_body(
                     await _stream.aclose()  # type: ignore[attr-defined]
                 except Exception:
                     pass
+
+        if _visible_idle:
+            result.action = "break"
+            from backend.agent.user_channel import user_visible_content
+
+            try:
+                loop.last_exit_reason = "llm_visible_idle"
+            except Exception:
+                pass
+            partial = user_visible_content(accumulated_content)
+            result.final_content = (
+                (partial + "\n\n思考时间过长，本轮先停。发送「继续」可接着做。")
+                if partial
+                else "思考时间过长，本轮先停。发送「继续」可接着做。"
+            )
+            result.accumulated_content = accumulated_content
+            result.accumulated_reasoning = accumulated_reasoning
+            result.tool_calls = tool_calls
+            logger.warning(
+                "LLM visible-idle/round cap session=%s waited=%.0fs visible_idle=%.0fs",
+                session_id,
+                time.monotonic() - _stream_t0,
+                time.monotonic() - _last_visible,
+            )
+            return result
 
         if loop._should_stop:
             result.action = "break"
@@ -709,17 +864,6 @@ async def _run_llm_round_body(
     # 本轮 LLM 成功，重置失败计数
     loop._llm_fail_streak = 0
 
-    # 通道进度：优先 reasoning，其次可见 content（不含 tool 调用细节）
-    _think = (accumulated_reasoning or accumulated_content or "").strip()
-    if _think:
-        await loop._emit_progress("thinking", _think[:1200])
-        trace_thinking_steps.append({
-            "iteration": iteration + 1,
-            "content": (accumulated_reasoning or "")[:800],
-            "visible_content": (accumulated_content or "")[:400],
-            "has_tool_calls": bool(tool_calls),
-        })
-
     # 原生 tool_calls 成功 → 重置伪 tool 泄漏计数
     if tool_calls:
         try:
@@ -727,7 +871,9 @@ async def _run_llm_round_body(
         except Exception:
             pass
 
-    # P0-2：无 native tool_calls 时，尝试从正文回收伪 tool
+    # P0-2：无 native tool_calls 时，尝试从正文回收伪 tool。
+    # force_final / 本轮未下发 schema 时只擦除泄漏，不再回收执行
+    # （否则收口后模型把 configure_tevarn 写进正文又被当真工具跑）。
     if not tool_calls and (accumulated_content or "").strip():
         try:
             from backend.core.config import settings as _st_ptr
@@ -745,6 +891,16 @@ async def _run_llm_round_body(
                     recover_tool_calls_from_content,
                     scrub_leak_markers,
                 )
+
+                _no_schema = force_final_no_tools or not (tools or [])
+                recovered = None
+                cleaned = accumulated_content
+                if _no_schema and looks_like_pseudo_tool_content(accumulated_content):
+                    logger.info(
+                        "pseudo tool recover whitelist-only force_final=%s session=%s",
+                        force_final_no_tools,
+                        session_id,
+                    )
 
                 # 本轮 schema：允许 DSML/伪 tool 回收 mcp_* 与检索类（须在 schema 内）
                 schema_names: set[str] = set()
@@ -764,16 +920,30 @@ async def _run_llm_round_body(
                             schema_names.add(n)
                 except Exception:
                     schema_names = set()
-                recovered, cleaned = recover_tool_calls_from_content(
-                    accumulated_content,
-                    schema_names=schema_names or None,
-                )
+                if recovered is None:
+                    recovered, cleaned = recover_tool_calls_from_content(
+                        accumulated_content,
+                        schema_names=schema_names or None,
+                    )
+                try:
+                    from backend.agent.pseudo_tool_recover import RECOVER_WHITELIST as _RWL
+                except Exception:
+                    _RWL = frozenset({"result_load"})
+                _block_force = {"command", "file_write", "edit", "apply_patch"}
                 if recovered and schema_names:
                     kept = [
                         t
                         for t in recovered
                         if str(getattr(t, "name", "") or "") in schema_names
+                        or str(getattr(t, "name", "") or "") in _RWL
                     ]
+                    if force_final_no_tools:
+                        kept = [
+                            t
+                            for t in kept
+                            if str(getattr(t, "name", "") or "") in _RWL
+                            and str(getattr(t, "name", "") or "") not in _block_force
+                        ]
                     if len(kept) != len(recovered):
                         logger.info(
                             "pseudo tool recover dropped n=%s not-in-schema session=%s",
@@ -781,6 +951,20 @@ async def _run_llm_round_body(
                             session_id,
                         )
                     recovered = kept
+                if recovered and not (tools or []):
+                    kept = [
+                        t
+                        for t in recovered
+                        if str(getattr(t, "name", "") or "") in _RWL
+                        and str(getattr(t, "name", "") or "") not in _block_force
+                    ]
+                    if not kept:
+                        accumulated_content = scrub_leak_markers(
+                            cleaned or accumulated_content
+                        )
+                        recovered = []
+                    else:
+                        recovered = kept
                 if recovered:
                     tool_calls = list(recovered)
                     accumulated_content = cleaned
@@ -839,15 +1023,19 @@ async def _run_llm_round_body(
                         }
                     )
                     if streak >= 2:
-                        result.force_final_no_tools = True
-                        result.action = "continue"
-                        result.accumulated_content = scrub_leak_markers(
-                            accumulated_content
+                        from backend.agent.pseudo_tool_recover import (
+                            leak_stop_final_text as _leak_stop,
                         )
+
+                        # 再开 force_final 轮会空转生成十几万 token；直接停。
+                        result.force_final_no_tools = True
+                        result.action = "break"
+                        result.final_content = _leak_stop(accumulated_content)
+                        result.accumulated_content = ""
                         result.accumulated_reasoning = accumulated_reasoning
                         result.tool_calls = []
                         logger.warning(
-                            "pseudo tool leak force_final streak=%s session=%s",
+                            "pseudo tool leak stop streak=%s session=%s",
                             streak,
                             session_id,
                         )
@@ -864,6 +1052,26 @@ async def _run_llm_round_body(
                     return result
             except Exception as _ptr_e:
                 logger.warning("pseudo tool recover skip: %s", _ptr_e)
+
+    # 通道进度：优先 reasoning；正文若仍像伪 tool 则不推（避免泄漏进思考流）
+    try:
+        from backend.agent.pseudo_tool_recover import looks_like_pseudo_tool_content as _lk_em
+        from backend.agent.pseudo_tool_recover import scrub_leak_markers as _sc_em
+    except Exception:
+        _lk_em = lambda _s: False  # noqa: E731
+        _sc_em = lambda _s: _s  # noqa: E731
+    _vis = (accumulated_content or "").strip()
+    if _vis and _lk_em(_vis):
+        _vis = _sc_em(_vis)
+    _think = (accumulated_reasoning or _vis or "").strip()
+    if _think and not (not accumulated_reasoning and _lk_em(accumulated_content or "")):
+        await loop._emit_progress("thinking", _think[:1200])
+        trace_thinking_steps.append({
+            "iteration": iteration + 1,
+            "content": (accumulated_reasoning or "")[:800],
+            "visible_content": _vis[:400],
+            "has_tool_calls": bool(tool_calls),
+        })
 
     # 判断是否有 tool calls
     if tool_calls:

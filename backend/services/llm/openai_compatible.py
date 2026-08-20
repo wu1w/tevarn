@@ -4,8 +4,10 @@
 任何遵循 OpenAI /v1/chat/completions 格式的本地或远程服务
 """
 
+import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -570,6 +572,7 @@ class OpenAICompatibleService(LLMService):
         """
         out: list[dict[str, Any]] = []
         pending_tool_ids: set[str] = set()
+        missing_reasoning_n = 0
 
         # 预扫描：收集本序列中所有 assistant.tool_calls 声明的 tool_call_id。
         # 用于识别"孤儿 tool 消息"——引用了不存在 tool_calls 的 tool 消息。
@@ -666,15 +669,31 @@ class OpenAICompatibleService(LLMService):
                     alt = m.get("reasoning")
                     if isinstance(alt, str) and alt.strip():
                         rc = alt
-                    elif isinstance(content, str) and content:
-                        try:
-                            from backend.agent.thinking_format import (
-                                extract_reasoning_content,
-                            )
+                    else:
+                        rc = ""
+                # Stash in tool_calls JSON before extracting <thinking> from content
+                try:
+                    from backend.agent.thinking_format import (
+                        split_reasoning_from_tool_calls,
+                    )
 
-                            rc = extract_reasoning_content(content)
-                        except Exception:
-                            rc = ""
+                    tcs_clean, stashed_rc = split_reasoning_from_tool_calls(tcs)
+                    if tcs_clean is not None:
+                        tcs = tcs_clean
+                        m["tool_calls"] = tcs_clean
+                    if stashed_rc and not (isinstance(rc, str) and rc.strip()):
+                        rc = stashed_rc
+                except Exception:
+                    pass
+                if not (isinstance(rc, str) and rc.strip()) and isinstance(content, str) and content:
+                    try:
+                        from backend.agent.thinking_format import (
+                            extract_reasoning_content,
+                        )
+
+                        rc = extract_reasoning_content(content)
+                    except Exception:
+                        rc = ""
                 if isinstance(rc, str) and rc.strip():
                     m["reasoning_content"] = rc.strip()
                 else:
@@ -698,6 +717,7 @@ class OpenAICompatibleService(LLMService):
                             if not isinstance(tc, dict):
                                 continue
                             tc2 = dict(tc)
+                            tc2.pop("_tevarn_reasoning", None)
                             fn = dict(tc2.get("function") or {})
                             fn["arguments"] = _safe_tool_arguments(fn.get("arguments"))
                             # name required
@@ -712,10 +732,7 @@ class OpenAICompatibleService(LLMService):
                             new_tcs.append(tc2)
                     m["tool_calls"] = new_tcs
                     if not m.get("reasoning_content"):
-                        logger.warning(
-                            "assistant tool_calls without reasoning_content "
-                            "(DeepSeek V4 thinking+tools may return HTTP 400)"
-                        )
+                        missing_reasoning_n += 1
                 else:
                     if content is None:
                         m["content"] = ""
@@ -757,6 +774,13 @@ class OpenAICompatibleService(LLMService):
                 continue
 
             out.append(m)
+
+        if missing_reasoning_n:
+            logger.warning(
+                "assistant tool_calls without reasoning_content x%d "
+                "(DeepSeek V4 thinking+tools may return HTTP 400)",
+                missing_reasoning_n,
+            )
 
         # 双向净化（对齐 hermes _sanitize_tool_pairs）：assistant.tool_calls 必须有
         # 对应 tool_result，反之亦然。发到 API 的消息是完整历史，任何 tool_calls 都
@@ -945,7 +969,11 @@ class OpenAICompatibleService(LLMService):
         )
 
         try:
-            from .http_session import ensure_session, stream_timeout
+            from .http_session import (
+                ensure_session,
+                first_event_timeout_seconds,
+                stream_timeout,
+            )
             from .sse import split_sse_data_lines
 
             session = ensure_session(self)
@@ -957,11 +985,34 @@ class OpenAICompatibleService(LLMService):
                 # TCP 分片安全：不能把每个 chunk 当成完整 SSE 行（半行 JSON 会静默丢事件）
                 sse_buf = ""
                 stream_done = False
+                first_to = first_event_timeout_seconds()
+                deadline = (time.monotonic() + first_to) if first_to else None
+                got_data = False
+                body_iter = resp.content.__aiter__()
 
-                async for raw in resp.content:
+                while True:
+                    if not got_data and deadline is not None:
+                        remain = deadline - time.monotonic()
+                        if remain <= 0:
+                            raise asyncio.TimeoutError(
+                                "LLM stream first SSE data event timeout"
+                            )
+                        try:
+                            raw = await asyncio.wait_for(
+                                body_iter.__anext__(), timeout=remain
+                            )
+                        except StopAsyncIteration:
+                            break
+                    else:
+                        try:
+                            raw = await body_iter.__anext__()
+                        except StopAsyncIteration:
+                            break
                     chunk = raw if isinstance(raw, (bytes, bytearray)) else bytes(raw)
                     text_s = sse_buf + chunk.decode("utf-8", errors="replace")
                     sse_buf, payloads = split_sse_data_lines(text_s)
+                    if payloads:
+                        got_data = True
                     for payload_s in payloads:
                         stop, chunks_out = acc.consume_data_line(payload_s)
                         for c in chunks_out:
@@ -984,6 +1035,15 @@ class OpenAICompatibleService(LLMService):
                 if not stream_done:
                     for c in acc.finalize():
                         yield c
+
+        except asyncio.TimeoutError:
+            logger.error("OpenAI-compatible stream first-event timeout")
+            yield LLMChunk(
+                message_id=message_id,
+                delta="[LLM Error] 模型流式首包超时（一直没收到 SSE data）。请重试。",
+                finish_reason="error",
+            )
+            return
 
         except aiohttp.ClientResponseError as e:
             logger.error(f"OpenAI-compatible chat error: status={e.status}, message='{e.message}', url='{e.request_info.url}'")

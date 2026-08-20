@@ -160,14 +160,16 @@ export function summarizeToolResult(
 export function isErrorContent(content: string | null | undefined): boolean {
   if (!content) return false;
   const s = content.trim();
+  // Only whole-message failure banners. Substring "错误"/"Error" matches
+  // normal analysis ("工具错误", "last error") and paints a good reply red.
   return (
     /^\[Error\]/i.test(s) ||
     /^\[LLM Error/i.test(s) ||
     /^Error:/i.test(s) ||
     /^LLM Error/i.test(s) ||
+    /^错误[:：]/u.test(s) ||
     (/\b401\b/.test(s) && /unauthor/i.test(s)) ||
-    content.includes(t('chatDisplay._e10')) ||
-    content.includes('LLM service failed')
+    /LLM service failed/i.test(s)
   );
 }
 

@@ -66,6 +66,22 @@ def stream_timeout() -> aiohttp.ClientTimeout:
     )
 
 
+def first_event_timeout_seconds() -> float | None:
+    """Wait budget for the first SSE ``data:`` event. None disables.
+
+    Keepalives / comment lines must not count as a first event.
+    0 must disable — do not use ``or default`` (0 is falsy).
+    """
+    try:
+        raw = getattr(settings, "llm_stream_first_event_timeout_seconds", 180.0)
+        v = float(raw)
+    except (TypeError, ValueError):
+        v = 180.0
+    if v <= 0:
+        return None
+    return v
+
+
 def _current_proxy_url() -> str | None:
     try:
         from backend.core.outbound_http import (

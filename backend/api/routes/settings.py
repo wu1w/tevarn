@@ -1907,10 +1907,14 @@ async def get_model_catalog(
             await model_catalog_mod.save_catalog(repo, catalog)
         except Exception:
             pass
-    # OAuth token 临近过期时刷新
+    # OAuth token 临近过期时刷新，并写回运行时 llm_api_key（否则聊天仍用旧 Key → 403）
     try:
+        key_before = model_catalog_mod.catalog_active_api_key(catalog)
         catalog = await model_catalog_mod.ensure_oauth_token_fresh(catalog)
         await model_catalog_mod.save_catalog(repo, catalog)
+        await model_catalog_mod.sync_oauth_runtime(
+            catalog, repo=repo, key_before=key_before
+        )
     except Exception:
         pass
 
@@ -2095,6 +2099,11 @@ async def select_active_model(
         pass
     await model_catalog_mod.save_catalog(repo, catalog)
     model_catalog_mod.apply_active_to_runtime(catalog)
+    # refresh 后 catalog 是新对象，必须回读，否则会把过期 Key 写回 llm_api_key
+    provider = next(
+        (p for p in catalog["providers"] if p["id"] == data.provider_id),
+        provider,
+    )
 
     from backend.core import model_gen_params as gen_params_mod
 

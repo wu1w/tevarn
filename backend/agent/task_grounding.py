@@ -93,7 +93,8 @@ _KIND_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "doc_qa",
         re.compile(
-            r"(根据(这个|该|以下)?(文件|文档|手册|PDF|说明)|总结(一下)?(这|该)?(篇|个)?|"
+            r"(根据(这个|该|以下)?.{0,16}(文件|文档|手册|PDF|说明|README|readme)|"
+            r"总结(一下)?(这|该|以下)?(篇|个)?(文件|文档|手册|PDF|文章|材料|readme)|"
             r"解读|摘录|文档里|readme|依据.*回答|基于.*材料|"
             r"summarize\s+(this|the)\s+(doc|file|pdf|readme)|"
             r"what\s+does\s+.{0,40}\s+say)",
@@ -623,6 +624,50 @@ _NUM_CLAIM_RE = re.compile(
     re.I,
 )
 _SKIP_PREFIX = ("http://", "https://", "www.", "example.com", "node_modules/")
+_FILE_EXTS = (
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".md",
+    ".toml",
+    ".json",
+    ".yml",
+    ".yaml",
+)
+_CODE_TREE_PREFIX = (
+    "backend/",
+    "frontend/",
+    "crates/",
+    "tests/",
+    "scripts/",
+    "src/",
+    "app/",
+    "lib/",
+)
+
+
+def _looks_like_cited_file_path(p: str) -> bool:
+    """Backticks often wrap API fields / slash-commands, not files."""
+    if not p or len(p) < 4 or " " in p:
+        return False
+    if any(p.lower().startswith(s) for s in _SKIP_PREFIX):
+        return False
+    if "=" in p or "://" in p:
+        return False
+    # `/fast` `/think` 这类产品斜杠命令
+    if re.fullmatch(r"/[A-Za-z][\w.-]*", p):
+        return False
+    low = p.lower()
+    if any(low.endswith(ext) for ext in _FILE_EXTS):
+        return True
+    if any(p.startswith(pref) or p.startswith("./" + pref) for pref in _CODE_TREE_PREFIX):
+        return True
+    # org/repo or low/medium/xhigh — not a workspace file
+    return False
 
 
 def extract_cited_paths(text: str) -> list[str]:
@@ -633,13 +678,7 @@ def extract_cited_paths(text: str) -> list[str]:
         p = raw.strip().strip("\"'").replace("\\", "/")
         p = re.sub(r":\d+(?:-\d+)?$", "", p)
         p = re.sub(r"#L\d+.*$", "", p)
-        if not p or len(p) < 4:
-            continue
-        if any(p.lower().startswith(s) for s in _SKIP_PREFIX):
-            continue
-        if "/" not in p and not p.endswith((".py", ".ts", ".tsx", ".js", ".rs", ".go")):
-            continue
-        if p.count(" ") > 0:
+        if not _looks_like_cited_file_path(p):
             continue
         key = p.lower()
         if key in seen:
@@ -842,8 +881,11 @@ def maybe_annotate_report(
     report: str,
     tools_used: Iterable[str] | None = None,
 ) -> str:
+    ui = user_input or ""
+    if ui.lstrip().startswith("【系统·编制自动回调】"):
+        return report
     return annotate_grounded_report(
-        report, user_input=user_input or "", tools_used=tools_used
+        report, user_input=ui, tools_used=tools_used
     )
 
 

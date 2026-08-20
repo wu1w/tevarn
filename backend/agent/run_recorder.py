@@ -381,7 +381,7 @@ class RunRecorder:
             if self.token_limit:
                 data["token_limit"] = int(self.token_limit)
             if final_summary:
-                data["final_summary"] = final_summary[:2000]
+                data["final_summary"] = final_summary[:100_000]
             if error:
                 data["error"] = error[:2000]
             await repo.update_run(self.run_id, data)

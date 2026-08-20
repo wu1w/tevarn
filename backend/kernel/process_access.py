@@ -7,6 +7,41 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def process_public_dict(proc: Any) -> dict[str, Any]:
+    """Serialize a kernel process for HTTP. Token may be object or dict.
+
+    Rust host hydrates ``token`` as a plain dict; Python AgentProcess uses
+    CapabilityToken.to_dict(). Callers must not assume ``.to_dict``.
+    """
+    if proc is None:
+        return {}
+    if hasattr(proc, "to_dict"):
+        try:
+            data = dict(proc.to_dict() or {})
+        except Exception:
+            data = {}
+    elif isinstance(proc, dict):
+        data = dict(proc)
+    else:
+        data = {}
+    tok = getattr(proc, "token", None)
+    if tok is None:
+        tok = data.get("token")
+    public: dict[str, Any] | None = None
+    if tok is not None:
+        if hasattr(tok, "to_dict"):
+            try:
+                public = tok.to_dict(sign=False)
+            except TypeError:
+                public = tok.to_dict()
+        elif isinstance(tok, dict):
+            public = dict(tok)
+        if isinstance(public, dict):
+            public.pop("signature", None)
+            data["token"] = public
+    return data
+
+
 def get_process_dict(kernel: Any, process_id: str) -> dict[str, Any] | None:
     pid = str(process_id or "").strip()
     if not pid:

@@ -58,7 +58,25 @@ def common_tool_dirs() -> list[str]:
         home / "AppData" / "Local" / "Programs" / "tevarn" / "resources" / "python" / "Scripts",
         home / ".takton" / "python" / "Scripts",
         home / ".tevarn" / "python" / "Scripts",
+        # Unix / macOS (GUI apps often miss these on PATH)
+        Path("/opt/homebrew/bin"),
+        Path("/opt/homebrew/sbin"),
+        Path("/usr/local/bin"),
+        Path("/opt/local/bin"),
+        Path("/usr/bin"),
+        home / ".volta" / "bin",
+        home / ".asdf" / "shims",
+        home / ".fnm" / "aliases" / "default" / "bin",
+        home / ".local" / "share" / "fnm" / "aliases" / "default" / "bin",
+        home / ".cargo" / "bin",
     ]
+    nvm = home / ".nvm" / "versions" / "node"
+    try:
+        if nvm.is_dir():
+            for child in sorted(nvm.iterdir(), reverse=True):
+                cands.append(child / "bin")
+    except Exception:
+        pass
     # 环境变量提示
     for key in ("NODE_HOME", "NODEJS_HOME", "NPM_CONFIG_PREFIX"):
         raw = (os.environ.get(key) or "").strip()
@@ -125,7 +143,9 @@ def resolve_host_command(command: str | None) -> str:
     try:
         p = Path(cmd)
         if p.is_file():
-            return str(p.resolve())
+            # Do not follow venv/npx symlinks: Mac/Linux venv python
+            # only sees its site-packages when launched via the venv path.
+            return str(p.absolute())
     except Exception:
         pass
 
@@ -157,12 +177,29 @@ def resolve_host_command(command: str | None) -> str:
     for hp in hard:
         try:
             if hp.is_file():
-                return str(hp.resolve())
+                return str(hp.absolute())
         except Exception:
             continue
 
     logger.debug("resolve_host_command: keep bare %r (not found on enriched PATH)", cmd)
     return cmd
+
+
+def resolve_existing_command(command: str | None) -> str | None:
+    """Like resolve_host_command, but None when the result is not a real file.
+
+    Never return a bare name such as ``npx`` that will FileNotFoundError
+    on a machine without Node. Used when writing MCP config.
+    """
+    resolved = resolve_host_command(command)
+    if not resolved:
+        return None
+    try:
+        if Path(resolved).is_file():
+            return str(Path(resolved).absolute())
+    except Exception:
+        return None
+    return None
 
 
 def build_process_env(

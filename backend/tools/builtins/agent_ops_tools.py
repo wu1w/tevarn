@@ -824,6 +824,18 @@ class UseToolPackTool(BaseTool):
             )
         unknown = [p for p in packs if p not in TOOL_PACKS and p != "core"]
         tools = tools_for_packs(packs)
+        if "result_load" not in tools:
+            have_rl = False
+            try:
+                from backend.tools.registry import ToolRegistry
+
+                have_rl = ToolRegistry.get("result_load") is not None
+            except Exception:
+                have_rl = False
+            if have_rl or any(
+                pk in {"web", "mcp", "coding", "integrations"} for pk in packs
+            ):
+                tools = list(tools) + ["result_load"]
         return json.dumps(
             {
                 "ok": True,

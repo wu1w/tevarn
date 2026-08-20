@@ -1,6 +1,10 @@
 """Unit tests for thinking / reasoning presentation helpers."""
 
 from backend.agent.thinking_format import (
+    TEVARN_REASONING_KEY,
+    stash_reasoning_in_tool_calls,
+    split_reasoning_from_tool_calls,
+
     canonicalize_thinking,
     extract_reasoning_content,
     is_visible_empty,
@@ -168,3 +172,86 @@ def test_ensure_keeps_streamed_body_no_excerpt_rewrite():
     assert "摘录" not in empty
     assert "工具轮次已用尽" not in empty
     assert "没有生成可见回复" in empty
+
+
+
+def test_reasoning_roundtrip_save_shape_to_history_rebuild():
+    """Persist stash on tool_calls JSON; history rebuild restores reasoning_content.
+
+    User-visible content must stay free of <thinking> tags.
+    """
+    from backend.agent.user_channel import content_for_chat_persist
+
+    calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "pytest", "arguments": "{}"},
+        }
+    ]
+    reasoning = "I should re-run the failing tests first"
+    persisted = stash_reasoning_in_tool_calls(calls, reasoning)
+    assert isinstance(persisted, list)
+    assert persisted[0][TEVARN_REASONING_KEY] == reasoning
+    # original list not required to stay clean, but persist shape is a list
+    visible = content_for_chat_persist(
+        "<thinking>secret</thinking>\nshort note", has_tool_calls=True
+    )
+    assert "<thinking>" not in (visible or "")
+    assert "secret" not in (visible or "")
+
+    restored, got = split_reasoning_from_tool_calls(persisted)
+    assert got == reasoning
+    assert restored[0]["id"] == "call_1"
+    assert TEVARN_REASONING_KEY not in restored[0]
+    # wrap shape also loads
+    wrapped = {"calls": calls, "reasoning": "from wrap"}
+    restored2, got2 = split_reasoning_from_tool_calls(wrapped)
+    assert got2 == "from wrap"
+    assert restored2[0]["id"] == "call_1"
+
+
+def test_strip_thinking_keeps_backticked_think_tags_and_tail():
+    """Prose that documents <think> inside backticks must not eat the rest."""
+    from backend.agent.user_channel import user_visible_content
+
+    tail_marker = "KEEP_TAIL_SECTION_AFTER_THINK_MENTION"
+    prose = (
+        "Hermes 侧：\n"
+        "- 把 `reasoning_content` / `<think>` 从 UI 去掉\n"
+        "- 闭合的 `</think>` 也不该吞掉后文\n\n"
+        "## 后续章节\n\n"
+        "实现细节继续。\n\n"
+        f"{tail_marker}\n"
+        "### 再一节\n"
+        "更多内容保持完整。\n"
+    )
+    stripped = strip_thinking(prose)
+    visible = user_visible_content(prose)
+    # strip_thinking keeps the documented tag; user channel escapes leftover openers
+    assert "`<think>`" in stripped
+    assert tail_marker in stripped
+    assert stripped.index(tail_marker) > stripped.index("`<think>`")
+    assert tail_marker in visible
+    assert "`reasoning_content`" in visible
+    assert "后续章节" in visible
+    assert "更多内容保持完整" in visible
+    assert "<think" not in visible
+    assert "&lt;think" in visible
+    assert visible.index(tail_marker) > visible.index("&lt;think")
+
+
+def test_unclosed_thinking_at_start_still_strips():
+    assert strip_thinking("<thinking>\nhalf") == ""
+    assert "half" not in strip_thinking("<thinking>\nhalf")
+    # leading closed block still stripped; backticked mention after it stays
+    raw = (
+        "<thinking>\nsecret plan\n</thinking>\n\n"
+        "把 `reasoning_content` / `<think>` 从 UI 去掉\n"
+        "TAIL_OK"
+    )
+    out = strip_thinking(raw)
+    assert "secret plan" not in out
+    assert "`<think>`" in out
+    assert "TAIL_OK" in out
+

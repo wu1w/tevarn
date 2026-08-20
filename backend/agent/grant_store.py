@@ -248,6 +248,25 @@ def sync_catalog_from_kernel(kernel: Any | None = None) -> bool:
         return False
 
 
+def expand_implied_tool_caps(
+    capabilities: list[str] | None,
+) -> list[str] | None:
+    """把抽象读权限展开成 court 可精确匹配的工具名。
+
+    旧 kernel catalog 可能没有 result_load→file_read；把 result_load 写进
+    能力列表后，即使 host 只做 exact-name 匹配也会放行。不改档案库。
+    """
+    if capabilities is None:
+        return None
+    caps = [str(x).strip() for x in capabilities if str(x).strip()]
+    have = set(caps)
+    if not have or "*" in have:
+        return caps
+    if "result_load" not in have and (have & {"file_read", "file_rw"}):
+        caps.append("result_load")
+    return caps
+
+
 def tool_matches_crew_caps(tool: str, capabilities: list[str] | set[str] | frozenset[str] | None) -> bool:
     """工具名是否被编制能力集覆盖（抽象 cap 如 file_rw 可覆盖 file_read/glob/grep）。
 
@@ -261,6 +280,11 @@ def tool_matches_crew_caps(tool: str, capabilities: list[str] | set[str] | froze
     abstract = TOOL_TO_CREW_CAP.get(tool)
     if abstract and abstract in caps:
         return True
+    # result_load → file_read → file_rw：有读写面即可回读外置结果
+    if abstract:
+        broader = TOOL_TO_CREW_CAP.get(abstract)
+        if broader and broader in caps:
+            return True
     # 运行时 MCP 工具：prefix 规则（与 engineering.manage_mcp 对齐）
     t = str(tool or "")
     if t.startswith("mcp_") or t in {"mcp_call", "mcp"}:

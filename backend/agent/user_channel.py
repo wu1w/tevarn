@@ -17,6 +17,15 @@ _PROGRESS_HEAD = re.compile(
     r"I(?:'ll| will) |Let me |Looking at |Reading )",
     re.I,
 )
+# Mid-body progress (models often lead with "官网已定位" then "接着抽…").
+_PROGRESS_BODY = re.compile(
+    r"(接着抽|接着读|再核一下|避免只凭|先分页读|正在拉正文|正文再核|"
+    r"不要停在一句进度|再给你结论|先定位|不再重复搜)",
+)
+# Model sometimes wraps the same sentence in a fake file protocol
+# (`<file_start>…<file_end>` — not necessarily a slash close tag).
+_FILE_WRAP = re.compile(r"<file_start>[\s\S]*?</?file_end>", re.I)
+_FILE_TAG = re.compile(r"</?file_(?:start|end)>", re.I)
 _DEFINES_PROJECT = re.compile(
     r"(是一个|是一種|is an?\s|written in\s|Rust SOCKS|HTTP 代理)",
     re.I,
@@ -26,11 +35,69 @@ _COMPLETE_CLOSE = re.compile(
     r"审查结论|建议修复)",
     re.I,
 )
+# Model stop tokens that sometimes leak into the assistant body.
+_LEAKED_STOP = re.compile(
+    r"\s*<\|(?:eos|endoftext|im_end|eot_id)\|>\s*",
+    re.I,
+)
+_UNIQUE_WRAP = re.compile(
+    r"(?is)<\|uniquecall_id\|>[\s\S]*?(?:</uniquecall>|$)",
+)
+_UNIQUE_TAG = re.compile(
+    r"</?unique[A-Za-z_][\w]*>|<\|unique[A-Za-z_][\w]*\|>",
+    re.I,
+)
+
+
+def _strip_leaked_stop_tokens(body: str) -> str:
+    """Remove leaked stop tokens and the whitespace hugging them."""
+    if not body:
+        return body or ""
+    out = _FILE_WRAP.sub("", body)
+    out = _FILE_TAG.sub("", out)
+    out = _UNIQUE_WRAP.sub("", out)
+    out = _UNIQUE_TAG.sub("", out)
+    out = re.sub(r"(?i)</uniquecall>?", "", out)
+    out = _LEAKED_STOP.sub(" ", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
 
 
 def user_visible_content(text: Optional[str]) -> str:
     """Strip thinking/reason tags; this is what the user may see."""
-    return strip_thinking(text)
+    body = strip_thinking(text)
+    # remaining <think / <thinking / </think are mentions, not real blocks
+    # (old frontend parseMessageContent treats leftover openers as unclosed thinking)
+    body = re.sub(r"<(?=/?(?:think|thinking)\b)", "&lt;", body, flags=re.I)
+    try:
+        from backend.agent.pseudo_tool_recover import collapse_repetition_tail
+        from backend.agent.pseudo_tool_recover import looks_like_pseudo_tool_content
+        from backend.agent.pseudo_tool_recover import scrub_leak_markers
+
+        if looks_like_pseudo_tool_content(body):
+            body = scrub_leak_markers(body)
+        else:
+            body = collapse_repetition_tail(body)
+    except Exception:
+        pass
+    return _strip_leaked_stop_tokens(body)
+
+
+def looks_like_in_progress_narration(text: Optional[str]) -> bool:
+    """True only for 'I will now…' / '接着抽…' asides, not every short answer.
+
+    Used to block finalize. ``looks_like_progress_note`` stays looser so
+    tool-turn persist can keep a short status line.
+    """
+    body = user_visible_content(text)
+    if not body:
+        return False
+    if _PROGRESS_HEAD.search(body.lstrip()):
+        return True
+    if _PROGRESS_BODY.search(body):
+        return True
+    return False
 
 
 def looks_like_progress_note(text: Optional[str]) -> bool:
@@ -41,9 +108,13 @@ def looks_like_progress_note(text: Optional[str]) -> bool:
     # Fabricated "X is a …" blurbs are not progress notes, even if short.
     if _DEFINES_PROJECT.search(body) and not _PROGRESS_HEAD.search(body.lstrip()):
         return False
+    if looks_like_in_progress_narration(body):
+        return True
     if len(body) <= 80:
         return True
     if len(body) <= 160 and _PROGRESS_HEAD.search(body.lstrip()):
+        return True
+    if len(body) <= 220 and _PROGRESS_BODY.search(body):
         return True
     return False
 
@@ -112,6 +183,7 @@ def should_stop_wrapup_redraft(
 __all__ = [
     "user_visible_content",
     "looks_like_progress_note",
+    "looks_like_in_progress_narration",
     "looks_like_complete_final_answer",
     "content_for_chat_persist",
     "should_stop_wrapup_redraft",

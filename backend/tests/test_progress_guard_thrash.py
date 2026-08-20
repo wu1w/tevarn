@@ -203,3 +203,138 @@ def test_poll_throttle_helpers():
     # immediate re-poll without new output → throttle
     r2 = poll_process_throttled(p)
     assert "Poll throttle" in r2 or "throttle" in r2.lower() or "Blocked" in r2
+
+
+
+def test_read_only_check_task_and_status_reads():
+    from backend.agent.progress_guard import (
+        decide_diag_check_action,
+        is_read_only_check_task,
+        is_status_read_call,
+        record_status_read,
+    )
+
+    assert is_read_only_check_task("重新进行基础检测")
+    assert is_read_only_check_task("做一次 self-check")
+    assert is_read_only_check_task("系统自检")
+    assert is_read_only_check_task("检查一下系统状态")
+    assert is_read_only_check_task("检查下你自己的工具调用、tevarn自配置、skill这些基础功能都正不正常")
+    assert is_read_only_check_task("我改了下代码，你复测一轮")
+    assert is_read_only_check_task("再测一轮")
+    assert not is_read_only_check_task("帮我写一个排序算法")
+    assert not is_read_only_check_task("修编译错误 E0433")
+    assert not is_read_only_check_task("帮我检查这段代码的 bug")
+
+    assert is_status_read_call("configure_tevarn", {"action": "status"})
+    assert is_status_read_call("configure_tevarn", {"action": "guide", "topic": "models"})
+    assert is_status_read_call("manage_skill", {"action": "list"})
+    assert is_status_read_call("get_system_status", {})
+    assert is_status_read_call("crew_steward", {"action": "list"})
+    assert not is_status_read_call("configure_tevarn", {"action": "set_setting", "key": "x"})
+    assert not is_status_read_call("manage_skill", {"action": "create", "name": "x"})
+    assert not is_status_read_call("file_write", {"path": "a.py"})
+    assert not is_status_read_call("file_read", {"path": "a.py"})
+    assert not is_status_read_call("grep", {"pattern": "foo"})
+    assert not is_status_read_call("glob", {"glob": "*.py"})
+
+    assert decide_diag_check_action(
+        user_input="重新进行基础检测",
+        wrote=False,
+        diag_probe_rounds=1,
+        duplicate_status=False,
+    ) == "skip_no_write"
+    assert decide_diag_check_action(
+        user_input="重新进行基础检测",
+        wrote=False,
+        diag_probe_rounds=3,
+        duplicate_status=False,
+    ) == "force_final"
+    # Duplicate status alone must not wrap — that chopped long tasks.
+    assert decide_diag_check_action(
+        user_input="重新进行基础检测",
+        wrote=False,
+        diag_probe_rounds=1,
+        duplicate_status=True,
+    ) == "skip_no_write"
+    assert decide_diag_check_action(
+        user_input="帮我写一个排序",
+        wrote=False,
+        had_work=False,
+        diag_probe_rounds=5,
+        duplicate_status=True,
+    ) == "force_final"
+    assert decide_diag_check_action(
+        user_input="再测一轮",
+        wrote=False,
+        had_work=True,
+        diag_probe_rounds=5,
+        duplicate_status=True,
+    ) == "none"
+    assert decide_diag_check_action(
+        user_input="继续",
+        wrote=False,
+        had_work=False,
+        had_work_this_run=True,
+        diag_probe_rounds=5,
+        duplicate_status=True,
+    ) == "none"
+    assert decide_diag_check_action(
+        user_input="帮我写一个排序",
+        wrote=False,
+        had_work=False,
+        diag_probe_rounds=3,
+        duplicate_status=False,
+    ) == "force_final"
+    assert decide_diag_check_action(
+        user_input="重新进行基础检测",
+        wrote=True,
+        diag_probe_rounds=3,
+        duplicate_status=True,
+    ) == "none"
+
+    counts: dict[str, int] = {}
+    assert record_status_read(counts, "configure_tevarn", {"action": "status"}) is False
+    assert record_status_read(counts, "configure_tevarn", {"action": "status"}) is True
+    # different topic is a new signature
+    assert record_status_read(
+        counts, "configure_tevarn", {"action": "status", "topic": "models"}
+    ) is False
+
+
+def test_rust_diag_command_not_file_body():
+    from backend.agent.progress_guard import is_rust_diag_command
+
+    assert is_rust_diag_command("rustup default stable")
+    assert is_rust_diag_command("where cargo")
+    assert is_rust_diag_command("cargo -V")
+    assert not is_rust_diag_command("cargo check -p tevarn-kernel")
+    assert not is_rust_diag_command("python -m pytest backend/tests")
+    assert not is_rust_diag_command("pytest backend/tests/test_progress_guard_thrash.py")
+
+
+def test_round_did_work_and_had_work_this_run():
+    from backend.agent.progress_guard import (
+        decide_diag_check_action,
+        round_did_work,
+    )
+
+    assert not round_did_work([("configure_tevarn", {"action": "status"})])
+    assert not round_did_work([("manage_skill", {"action": "list"})])
+    assert round_did_work([("command", {"cmd": "pytest"})])
+    assert round_did_work([("tavily_search", {"query": "x"})])
+    assert round_did_work([("file_read", {"path": "a.py"})])
+    assert round_did_work(
+        [
+            ("configure_tevarn", {"action": "status"}),
+            ("command", {"cmd": "pytest -q"}),
+        ]
+    )
+    # After work earlier this run, later status dups never wrap.
+    assert decide_diag_check_action(
+        user_input="[System auto-resume] Continue the unfinished Goal",
+        wrote=False,
+        had_work=False,
+        had_work_this_run=True,
+        diag_probe_rounds=3,
+        duplicate_status=True,
+    ) == "none"

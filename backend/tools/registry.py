@@ -253,6 +253,11 @@ class ToolRegistry:
                 .strip()
                 or None
             )
+            _sid = (
+                str(args.get("_session_id") or args.get("session_id") or "")
+                .strip()
+                or None
+            )
             if isinstance(result, dict):
                 # drop huge unused image field if empty path present
                 data = result.get("data")
@@ -260,11 +265,11 @@ class ToolRegistry:
                     pass
                 text = _json.dumps(result, ensure_ascii=False, default=str)
                 text = normalize_tool_result(
-                    text, tool_name=name, process_id=_pid
+                    text, tool_name=name, process_id=_pid, session_id=_sid
                 )
             else:
                 text = normalize_tool_result(
-                    result, tool_name=name, process_id=_pid
+                    result, tool_name=name, process_id=_pid, session_id=_sid
                 )
             # 禁止空结果 / 裸 [Error]
             if text is None or (isinstance(text, str) and not text.strip()):

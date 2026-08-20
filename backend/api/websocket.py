@@ -417,11 +417,16 @@ class ConnectionManager:
             if detail is not None:
                 snap.detail = str(detail)
             if state == "idle":
-                # 终态：若 agent 任务已结束则清快照；否则保留到 task done
+                # Turn is over. Keep an idle tombstone while the asyncio
+                # task unwinds so sync cannot remount "running" from
+                # has_running_agent. Task-done cleanup drops the tombstone.
+                snap.state = "idle"
+                snap.agent_running = False
+                snap.partial_content = ""
+                snap.live_tools = []
                 if not running:
                     self.end_run_snapshot(session_id)
                 else:
-                    snap.agent_running = True
                     self._maybe_flush_snapshot(session_id)
             elif state == "error":
                 if not running:
@@ -559,8 +564,30 @@ class ConnectionManager:
                 self._agent_loops.pop(sid, None)
                 # 任务结束后释放快照，防止 UI 永久 Resuming
                 self.end_run_snapshot(sid)
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self._emit_idle_if_no_agent(sid))
+                except RuntimeError:
+                    pass
 
         task.add_done_callback(_cleanup)
+
+    async def _emit_idle_if_no_agent(self, session_id: uuid.UUID) -> None:
+        """After the agent task exits, tell the UI once. No successor → idle."""
+        if self.has_running_agent(session_id):
+            return
+        try:
+            await self.broadcast(
+                session_id,
+                {
+                    "type": "status",
+                    "state": "idle",
+                    "detail": "Ready",
+                    "agent_running": False,
+                },
+            )
+        except Exception:
+            pass
 
     def get_agent_loop(self, session_id: uuid.UUID) -> Any | None:
         return self._agent_loops.get(session_id)
@@ -1705,7 +1732,18 @@ async def websocket_endpoint(
                             "snapshot_updated_at": None,
                         }
                     )
-                    # 以 task 存活为准
+                    # Unwind tombstone: status=idle AND agent_running already
+                    # cleared. Do not let a stale idle *label* on a live snap
+                    # hide a running agent (previous-run idle leftover).
+                    if (
+                        snap is not None
+                        and str(getattr(snap, "state", "") or "") in (
+                            "idle",
+                            "error",
+                        )
+                        and not bool(getattr(snap, "agent_running", False))
+                    ):
+                        running = False
                     snap_fields["agent_running"] = running
                     if not running:
                         snap_fields["state"] = "idle"

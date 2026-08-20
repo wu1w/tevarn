@@ -171,7 +171,14 @@ async def load_identity_capabilities(identity_id: str | None) -> list[str] | Non
         ident = await reg.get(_u.UUID(str(identity_id)))
         if ident is None:
             return None
-        return list(ident.capabilities or [])
+        caps = list(ident.capabilities or [])
+        try:
+            from backend.agent.grant_store import expand_implied_tool_caps
+
+            caps = expand_implied_tool_caps(caps) or caps
+        except Exception:
+            pass
+        return caps
     except Exception as e:
         logger.debug("load identity caps skip: %s", e)
         return None

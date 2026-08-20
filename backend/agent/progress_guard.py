@@ -60,6 +60,79 @@ READ_ONLY_TOOLS = frozenset({
     "list_available_models", "get_system_status", "capability_status", "fetch_webpage",
 })
 
+# Product/config status probes. Not file writes, but they ARE evidence for a
+# self-check / 基础检测. Without this, configure_tevarn(status) x12 looks like
+# idle no_write and the cargo-oriented nudge tells the model to write files.
+STATUS_READ_TOOLS = frozenset({
+    "configure_tevarn",
+    "manage_skill",
+    "get_system_status",
+    "capability_status",
+    "list_available_models",
+    "crew_steward",
+    "manage_mcp",
+    "list_devices_tool",
+})
+_STATUS_READ_ACTIONS = frozenset({
+    "status",
+    "guide",
+    "list",
+    "list_settings",
+    "checklist",
+    "search",
+    "topics",
+    "get",
+    "info",
+    "show",
+    "describe",
+    "overview",
+    "",
+})
+_STATUS_WRITE_ACTIONS = frozenset({
+    "set_setting",
+    "set",
+    "create",
+    "update",
+    "delete",
+    "enable",
+    "disable",
+    "install",
+    "uninstall",
+    "add",
+    "remove",
+    "hire",
+    "fire",
+    "kill",
+    "spawn",
+    "grant",
+    "revoke",
+    "write",
+})
+_READ_ONLY_CHECK_RE = re.compile(
+    r"(?i)("
+    r"基础检测|重新(进行)?(基础)?检测|"
+    r"系统自检|自我检测|自我检查|自检一下|"
+    r"self[\s-]?check|basic\s+(self[\s-]?)?check|"
+    r"开箱(检查|清单|检测)|"
+    r"(检查|看看)(一下|下)?(系统|配置|健康|运行|工具|skill|技能|自配置)(状态|情况|调用|功能)?"
+    r"|正不正常|基础功能"
+    r"|复测|再测|re-?test|复测一轮|再检测"
+    r"|工具调用.{0,24}基础功能"
+    r"|检查下?你自己"
+    r")"
+)
+
+# 复测 / 正不正常 / 工具调用.*基础功能 win over past-tense 改代码
+_VERIFY_CHECK_RE = re.compile(
+    r"(?i)("
+    r"正不正常|基础功能|基础检测|"
+    r"工具调用.{0,24}基础|"
+    r"检查下?你自己|"
+    r"系统自检|自我检测|自我检查|自检|"
+    r"self[\s-]?check"
+    r")"
+)
+
 _DIAG_NAME_RE = re.compile(
     r"(?i)(?:^|[/\\])_(?:cargo|diag|reinstall|hello|t_msvc|check|run_|gen_|find_|clean_)"
 )
@@ -67,6 +140,17 @@ _HANDLE_RE = re.compile(
     r"\[tool_result_handle\s+id=([a-fA-F0-9]+)[^\]]*\]",
     re.I,
 )
+_RESULT_LOAD_ID_RE = re.compile(
+    r"\[result_load\s+id=([a-fA-F0-9]+)",
+    re.I,
+)
+_RESULT_LOAD_ARG_ID_RE = re.compile(
+    r"\"(?:id|handle_id)\"\s*:\s*\"([a-fA-F0-9]+)\"",
+    re.I,
+)
+# Mid-task progress after a spill: nudge result_load this many times before
+# a last-chance force_final. Never treat an unread handle as a finished answer.
+UNREAD_HANDLE_NUDGE_MAX = 3
 _FILE_READ_CAP_RE = re.compile(
     r"(?i)file_read\s*次数已达上限|max_file_reads|file_read.*cap",
 )
@@ -191,7 +275,8 @@ _REVIEW_ONLY_RE = re.compile(
 )
 _FIX_TASK_RE = re.compile(
     r"(?i)(修编译|对齐编译|cargo\s*check|error\[E|E\d{3,4}|强制改|"
-    r"实现|写入|fix\s+(the\s+)?(compile|build|error)|修错|改代码)"
+    r"实现|写入|fix\s+(the\s+)?(compile|build|error)|修错|"
+    r"(?:请|帮我|帮忙)?改代码|改一下(?:这|那)?(?:段)?代码)"
 )
 _CARGO_PATH_ENV_RE = re.compile(
     r"(?i)failed to load manifest|could not find [`']?Cargo\.toml[`']?|"
@@ -247,6 +332,143 @@ def is_deliver_allowed_grep(pattern: str, path: str = "") -> bool:
     # optional: refuse recursive workspace-root dumps with broad path
     _ = path  # reserved for future path-scoped policy
     return True
+
+
+def is_status_read_call(name: str, args: dict[str, Any] | None = None) -> bool:
+    """True for configure_tevarn/manage_skill/status-style reads (not writes).
+
+    ``file_read`` / ``grep`` / ``glob`` are evidence reads, not product
+    self-check probes. Treating them as status chopped repo reviews
+    into ``diag_enough`` after a few files.
+    """
+    n = str(name or "").strip()
+    if not n:
+        return False
+    if n not in STATUS_READ_TOOLS:
+        return False
+    a = args if isinstance(args, dict) else {}
+    act = str(a.get("action") or a.get("op") or "").strip().lower()
+    if act in _STATUS_WRITE_ACTIONS:
+        return False
+    if n in {
+        "get_system_status",
+        "capability_status",
+        "list_available_models",
+        "list_devices_tool",
+    }:
+        return True
+    return act in _STATUS_READ_ACTIONS
+
+
+WORK_TOOL_NAMES = frozenset({
+    "command",
+    "process",
+    "python",
+    "file_write",
+    "edit",
+    "apply_patch",
+    "desktop_write_file",
+    "doc_write",
+})
+
+
+def is_work_tool_name(name: str) -> bool:
+    """Tools that do work (shell/tests/edits). A round with these is not idle status."""
+    return str(name or "").strip() in WORK_TOOL_NAMES
+
+
+def round_did_work(calls: list[tuple[str, dict | None]]) -> bool:
+    """True if any call is real work, not a product/config status read.
+
+    Search, MCP, file_read, command, writes, and mutating configure all count.
+    Only a round of status/list/guide probes is idle for wrap-up.
+    """
+    for name, args in calls or []:
+        n = str(name or "").strip()
+        if is_work_tool_name(n):
+            return True
+        if not is_status_read_call(n, args):
+            return True
+    return False
+
+
+def is_read_only_check_task(user_input: str) -> bool:
+    """Hint only: skip cargo no_write nudge. Wrap-up is decided by tools used, not this."""
+    text = (user_input or "").strip()
+    if not text:
+        return False
+    if _FIX_TASK_RE.search(text) and not (
+        _READ_ONLY_CHECK_RE.search(text) or _VERIFY_CHECK_RE.search(text)
+    ):
+        return False
+    return bool(_READ_ONLY_CHECK_RE.search(text) or _VERIFY_CHECK_RE.search(text))
+
+
+def record_status_read(
+    counts: dict[str, int],
+    name: str,
+    args: dict[str, Any] | None = None,
+) -> bool:
+    """Record one status-read. Return True if this tool+args is a repeat."""
+    if not is_status_read_call(name, args):
+        return False
+    try:
+        from backend.agent.robust import tool_call_signature
+
+        sig = tool_call_signature(name, args)
+    except Exception:
+        sig = f"{name}|{sorted((args or {}).items())}"
+    n = int(counts.get(sig, 0) or 0) + 1
+    counts[sig] = n
+    return n >= 2
+
+
+def decide_diag_check_action(
+    *,
+    user_input: str = "",
+    wrote: bool,
+    had_work: bool = False,
+    had_work_this_run: bool = False,
+    diag_probe_rounds: int,
+    duplicate_status: bool,
+    force_after: int = 3,
+) -> str:
+    """Return ``none`` / ``skip_no_write`` / ``force_final``.
+
+    Gate on what tools did, not on phrasing.
+    Any work this round or earlier this run → never wrap via this path
+    (a later configure_tevarn repeat must not chop a long task).
+    Status-only streak >= force_after → force_final.
+    A duplicate status read alone is skip_no_write, not wrap — that
+    used to cut long tasks after two identical status probes.
+    Phrase only affects skip_no_write (don't cargo-nudge a check).
+    """
+    if wrote or had_work or had_work_this_run:
+        return "none"
+    if int(diag_probe_rounds or 0) >= max(2, int(force_after or 3)):
+        return "force_final"
+    if (
+        int(diag_probe_rounds or 0) >= 1
+        or duplicate_status
+        or is_read_only_check_task(user_input)
+    ):
+        return "skip_no_write"
+    return "none"
+
+
+def diag_check_force_nudge(*, rounds: int = 0, duplicate: bool = False) -> str:
+    if duplicate:
+        return (
+            "[Enough evidence] Same status/config tool+args already returned. "
+            "Stop tools and write the check report now in the user's language. "
+            "Do not re-call configure_tevarn/manage_skill/crew_steward with the same args."
+        )
+    r = int(rounds or 0)
+    return (
+        f"[Enough evidence · {r} check rounds] Status/config reads already returned. "
+        "Stop tools and write the check report now in the user's language. "
+        "Do not probe configure_tevarn/manage_skill again."
+    )
 
 
 def is_review_only_task(user_input: str) -> bool:
@@ -508,6 +730,65 @@ def extract_result_handle(text: str) -> str:
     return m.group(1) if m else ""
 
 
+def extract_all_result_handles(text: str) -> list[str]:
+    return [m.group(1) for m in _HANDLE_RE.finditer(text or "")]
+
+
+def _result_load_ids_from_tool_calls(tcs: Any) -> list[str]:
+    out: list[str] = []
+    if not isinstance(tcs, list):
+        return out
+    for tc in tcs:
+        name = ""
+        args: Any = None
+        if isinstance(tc, dict):
+            fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+            name = str((fn or {}).get("name") or tc.get("name") or "")
+            args = (
+                tc.get("arguments")
+                or tc.get("args")
+                or (fn or {}).get("arguments")
+            )
+        else:
+            name = str(getattr(tc, "name", "") or "")
+            args = getattr(tc, "arguments", None)
+        if name.strip() != "result_load":
+            continue
+        if isinstance(args, dict):
+            hid = str(args.get("id") or args.get("handle_id") or "").strip()
+            if hid:
+                out.append(hid)
+            continue
+        blob = str(args or "")
+        for hid in _RESULT_LOAD_ARG_ID_RE.findall(blob):
+            out.append(hid)
+    return out
+
+
+def unread_result_handles(messages: list[dict[str, Any]] | None) -> list[str]:
+    """Handle ids spilled via tool_result_handle that were never result_load'd.
+
+    Order is first-seen. Loaded ids come from ``[result_load id=…]`` tool
+    bodies and from assistant ``result_load`` tool_calls.
+    """
+    seen: list[str] = []
+    loaded: set[str] = set()
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        content = str(m.get("content") or "")
+        role = str(m.get("role") or "")
+        if role == "tool" or "[tool_result_handle" in content or "[result_load" in content:
+            for hid in extract_all_result_handles(content):
+                if hid not in seen:
+                    seen.append(hid)
+            for hid in _RESULT_LOAD_ID_RE.findall(content):
+                loaded.add(hid)
+        for hid in _result_load_ids_from_tool_calls(m.get("tool_calls")):
+            loaded.add(hid)
+    return [h for h in seen if h not in loaded]
+
+
 def is_file_read_cap_message(text: str) -> bool:
     return bool(_FILE_READ_CAP_RE.search(text or ""))
 
@@ -741,6 +1022,56 @@ def is_progress_write(tool_name: str, args: dict[str, Any] | None = None) -> boo
 
 def is_cargo_verify_command(command: str) -> bool:
     return bool(_CARGO_CMD_RE.search(command or ""))
+
+
+# rust_diag: actual cargo/rustup/where-cargo / *_diag_rust* scripts only.
+# Never match file bodies (reading tool_round.py / tests that mention rust_diag).
+_RUST_DIAG_CMD_RE = re.compile(
+    r"(?i)("
+    r"\brustup(?:\.exe)?\b|"
+    r"\brustc(?:\.exe)?\s+-vV|"
+    r"\bcargo(?:\.exe)?\s+-V\b|"
+    r"\bcargo(?:\.exe)?\s+version\b|"
+    r"\bcargo(?:\.exe)?\s+metadata\b|"
+    r"where\s+(?:/r\s+)?cargo|"
+    r"Get-Command\s+cargo|"
+    r"_diag_rust|"
+    r"_reinstall_rust|"
+    r"_cargo_check"
+    r")"
+)
+_PYTEST_CMD_RE = re.compile(r"(?i)\b(pytest|python(?:3)?\s+-m\s+pytest)\b")
+
+
+def is_rust_diag_command(command: str) -> bool:
+    """True only for cargo/rustup env-diagnosis commands actually run.
+
+    ``cargo check/build/test`` is compile work (cargo_fix), not rust_diag.
+    pytest / python retests never count, even if output mentions rust_diag.
+    """
+    c = (command or "").strip()
+    if not c:
+        return False
+    if _PYTEST_CMD_RE.search(c):
+        return False
+    if is_cargo_verify_command(c) and not re.search(
+        r"(?i)(_diag_rust|_reinstall_rust|_cargo_check|rustup)", c
+    ):
+        return False
+    return bool(_RUST_DIAG_CMD_RE.search(c))
+
+
+def rust_diag_commands_from_calls(tool_calls: list[Any] | None) -> list[str]:
+    """Return rust-diag command strings from this round (command/process only)."""
+    found: list[str] = []
+    for tc in tool_calls or []:
+        name = str(getattr(tc, "name", "") or "")
+        if name not in ("command", "process"):
+            continue
+        cmd = command_from_tool(tc)
+        if is_rust_diag_command(cmd):
+            found.append(cmd)
+    return found
 
 
 def is_shell_probe_command(command: str) -> bool:

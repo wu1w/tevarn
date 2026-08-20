@@ -149,6 +149,7 @@ def test_greeting_answers_without_tools_and_strips_thinking():
     assert "<thinking>" not in streamed
     assert "reply warmly" not in streamed
     assert "在的" in streamed or "在的" in joined
+    assert loop._push_status.called
 
 
 def test_review_repo_does_not_persist_pretool_fabrication():
@@ -336,7 +337,11 @@ def test_auto_continue_segment_does_not_treat_reasoning_as_recorder():
 
 
 def test_no_write_ignored_nudge_force_final_stops_tools():
-    """no_write nudges must force_final; model cannot ignore them for many rounds."""
+    """Repo review file_reads are work, not self-check.
+
+    Treating ``file_read`` as a status probe used to wrap reviews as
+    ``diag_enough`` after ~3 files. That must not come back.
+    """
     from backend.core.config import settings as _st
 
     def _read(i):
@@ -384,9 +389,199 @@ def test_no_write_ignored_nudge_force_final_stops_tools():
         registry_patcher.stop()
         _stop_loop(loop, patcher)
 
-    # first_at=4, grace=2 → force after 6 read rounds; +1 final LLM
-    assert len(llm.calls) <= 8
+    # Past the old 3-round false diag wrap. file_read is work, so
+    # last_exit_reason must not be the self-check wrap.
+    assert len(llm.calls) > 3
     assert "不应再来" not in (out or "")
+    assert getattr(loop, "last_exit_reason", "") != "diag_enough"
+
+
+
+def test_basic_self_check_force_final_before_no_write_wall():
+    """基础检测 must answer after a few status reads, not wait for no_write@10."""
+    from backend.core.config import settings as _st
+
+    def _status(i, topic=None):
+        args = {"action": "status"}
+        if topic:
+            args["topic"] = topic
+        return [
+            _chunk(
+                tool_call=_tc(f"c{i}", "configure_tevarn", args),
+                finish="tool_calls",
+            )
+        ]
+
+    llm = _ScriptedLLMRespectTools(
+        [_status(i, topic=f"t{i}") for i in range(12)]
+        + [[_chunk(delta="检测结论：到此收束。", finish="stop")]]
+    )
+    loop, patcher = _make_loop(llm)
+    loop.max_iterations = 20
+    loop._execute_registered_tool = AsyncMock(return_value="status: ok")
+    registry_patcher = patch(
+        "backend.tools.registry.ToolRegistry.get",
+        return_value=SimpleNamespace(parameters={"type": "object", "properties": {}}),
+    )
+    registry_patcher.start()
+    patches = [
+        patch("backend.agent.tool_policy.scene_max_iterations", return_value=20),
+        patch.object(_st, "agent_auto_continue_max_segments", 1),
+        patch.object(_st, "agent_no_write_nudge_after", 6),
+        patch.object(_st, "agent_no_write_force_after", 4),
+        patch.object(_st, "agent_diag_check_force_after", 3),
+        patch.object(_st, "agent_converge_nudge_after", 99),
+        patch.object(_st, "agent_soft_open_mode", True),
+        patch.object(_st, "agent_thrash_force_final_interactive", False),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = asyncio.run(
+            _run_loop(
+                loop,
+                uuid.uuid4(),
+                text="重新进行基础检测",
+            )
+        )
+    finally:
+        for p in reversed(patches):
+            p.stop()
+        registry_patcher.stop()
+        _stop_loop(loop, patcher)
+
+    # 3 unique status rounds → force_final + 1 final LLM
+    assert len(llm.calls) <= 5
     last_tools = llm.calls[-1].get("tools")
     assert last_tools in (None, [])
-    assert getattr(loop, "last_exit_reason", "") == "no_write_ignored"
+    assert getattr(loop, "last_exit_reason", "") == "diag_enough"
+    assert "不应再来" not in (out or "")
+
+
+def test_basic_self_check_stops_repeat_status_args():
+    """Identical configure_tevarn status must force_final on the 2nd call."""
+    from backend.core.config import settings as _st
+
+    def _status(i):
+        return [
+            _chunk(
+                tool_call=_tc(f"c{i}", "configure_tevarn", {"action": "status"}),
+                finish="tool_calls",
+            )
+        ]
+
+    llm = _ScriptedLLMRespectTools(
+        [_status(i) for i in range(8)]
+        + [[_chunk(delta="检测结论：到此收束。", finish="stop")]]
+    )
+    loop, patcher = _make_loop(llm)
+    loop.max_iterations = 20
+    loop._execute_registered_tool = AsyncMock(return_value="status: ok")
+    registry_patcher = patch(
+        "backend.tools.registry.ToolRegistry.get",
+        return_value=SimpleNamespace(parameters={"type": "object", "properties": {}}),
+    )
+    registry_patcher.start()
+    patches = [
+        patch("backend.agent.tool_policy.scene_max_iterations", return_value=20),
+        patch.object(_st, "agent_auto_continue_max_segments", 1),
+        patch.object(_st, "agent_no_write_nudge_after", 6),
+        patch.object(_st, "agent_no_write_force_after", 4),
+        patch.object(_st, "agent_diag_check_force_after", 3),
+        patch.object(_st, "agent_converge_nudge_after", 99),
+        patch.object(_st, "agent_soft_open_mode", True),
+        patch.object(_st, "agent_thrash_force_final_interactive", False),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = asyncio.run(
+            _run_loop(
+                loop,
+                uuid.uuid4(),
+                text="重新进行基础检测",
+            )
+        )
+    finally:
+        for p in reversed(patches):
+            p.stop()
+        registry_patcher.stop()
+        _stop_loop(loop, patcher)
+
+    # 1st unique + 2nd duplicate → force; +1 final LLM
+    assert len(llm.calls) <= 4
+    last_tools = llm.calls[-1].get("tools")
+    assert last_tools in (None, [])
+    assert getattr(loop, "last_exit_reason", "") == "diag_enough"
+    assert "不应再来" not in (out or "")
+
+
+def test_visible_idle_timeout_keeps_reasoning_off_channel():
+    """Long reasoning-only stream must heartbeat-cap without leaking CoT."""
+    from backend.core.config import settings as _st
+
+    class _SlowThink:
+        async def chat(self, messages, tools=None, stream=True):
+            yield _chunk(reasoning_delta="secret plan do not show")
+            await asyncio.sleep(0.25)
+            yield _chunk(reasoning_delta="more secret")
+            await asyncio.sleep(0.25)
+            yield _chunk(delta="这句不该出现", finish="stop")
+
+    loop, patcher = _make_loop(_SlowThink())
+    patches = [
+        patch.object(_st, "agent_llm_round_visible_idle_secs", 0.05),
+        patch.object(_st, "agent_llm_round_max_seconds", 0.05),
+        patch.object(_st, "agent_llm_stream_heartbeat_secs", 0.02),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = asyncio.run(_run_loop(loop, uuid.uuid4(), text="在吗"))
+    finally:
+        for p in reversed(patches):
+            p.stop()
+        _stop_loop(loop, patcher)
+
+    assert "secret plan" not in (out or "")
+    assert "这句不该出现" not in (out or "")
+    assert getattr(loop, "last_exit_reason", "") == "llm_visible_idle"
+    streamed = _streamed_text(loop)
+    assert "secret plan" not in streamed
+    statuses = " ".join(
+        str(c.args[2]) if len(c.args) >= 3 else str(c.kwargs.get("detail") or "")
+        for c in loop._push_status.call_args_list
+    )
+    assert "思考" in statuses or "生成" in statuses
+
+
+def test_round_max_does_not_cut_live_visible_stream():
+    """Wall-clock cap must not abort a stream that is still emitting user text."""
+    from backend.core.config import settings as _st
+
+    class _Live:
+        async def chat(self, messages, tools=None, stream=True):
+            yield _chunk(delta="文件内容是 ")
+            await asyncio.sleep(0.08)
+            yield _chunk(delta="X", finish="stop")
+
+    loop, patcher = _make_loop(_Live())
+    patches = [
+        patch.object(_st, "agent_llm_round_visible_idle_secs", 1.0),
+        patch.object(_st, "agent_llm_round_max_seconds", 0.05),
+        patch.object(_st, "agent_llm_stream_heartbeat_secs", 0.02),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = asyncio.run(_run_loop(loop, uuid.uuid4(), text="读一下 a.py"))
+    finally:
+        for p in reversed(patches):
+            p.stop()
+        _stop_loop(loop, patcher)
+
+    assert out == "文件内容是 X"
+    assert getattr(loop, "last_exit_reason", "") != "llm_visible_idle"
+    streamed = _streamed_text(loop)
+    assert "文件内容是 X" in streamed
+    assert "思考时间过长" not in (out or "")

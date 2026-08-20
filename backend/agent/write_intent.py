@@ -118,6 +118,10 @@ def is_write_intent(user_input: str) -> bool:
     t = (user_input or "").strip()
     if not t:
         return False
+    # CEO 编制回调是短汇报，正文里常夹着员工工单的「写报告/落盘」字样，
+    # 不得因此打开 coding-flex / 禁止 force_final。
+    if t.startswith("【系统·编制自动回调】"):
+        return False
     if not _WRITE_RE.search(t):
         return False
     if _REVIEW_RE.search(t) and not _WRITE_VERB_RE.search(t):

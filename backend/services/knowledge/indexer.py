@@ -188,13 +188,17 @@ async def index_document_text(
 
     st = get_rag_status()
     if not st.index_upload:
+        # Local mode (no Embedding / Qdrant): content is still readable.
+        # Never mark as error — that shows 29/29 red on first launch.
         doc_repo = AsyncDocumentRepository()
         try:
-            await doc_repo.update_status(document_id, "error")
+            await doc_repo.update_status(document_id, "ready")
         except Exception:
             pass
         return {
-            "ok": False,
+            "ok": True,
+            "skipped": True,
+            "status": "ready",
             "error": "VECTOR_RAG_NOT_READY",
             "message": st.reason,
             "hints": st.hints,

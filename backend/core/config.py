@@ -512,6 +512,8 @@ class Settings(BaseSettings):
     agent_finalize_orphan_runs_on_idle: bool = True
     # Empty-progress / cargo-fix (OpenHands + Codex-inspired)
     agent_no_write_nudge_after: int = 6  # soft nudge only under soft-open
+    # Self-check / 基础检测: force answer after N probe rounds (not no_write@10)
+    agent_diag_check_force_after: int = 3
     agent_same_path_reread_max: int = 8  # same path file_read cap per run
     agent_cargo_fix_block_recheck: bool = False  # soft-open: allow re-check freely
     # Thrash-hardening: defaults soft; hard walls only when soft_open_mode=False
@@ -552,7 +554,12 @@ class Settings(BaseSettings):
     # 同会话上一轮未结束时，新消息等锁超时（秒）；0=无限等（不推荐）
     agent_session_lock_wait_secs: float = 120.0
     # LLM 流式静默超过该秒数推一次「仍在思考」状态；0=关闭
+    # 心跳按「无可见正文」计时，reasoning chunk 不重置（避免长 thinking 把进度掐死）
     agent_llm_stream_heartbeat_secs: float = 8.0
+    # 单轮 LLM 无可见 delta / tool_call 超过该秒则收束本轮；0=关闭
+    agent_llm_round_visible_idle_secs: float = 120.0
+    # 单轮 LLM 墙钟上限（含 thinking）；0=关闭
+    agent_llm_round_max_seconds: float = 300.0
     # 对话默认工具面：core=白名单(~18) | full=全部注册工具
     agent_tool_profile: Literal["coding", "assistant", "ops", "dynamic", "core", "full"] = "dynamic"
     agent_auto_thin_chat: bool = True  # F10: 自动薄档（问候/纯问答）；simple_mode 为会话级手动收窄
@@ -579,6 +586,10 @@ class Settings(BaseSettings):
     llm_request_timeout_seconds: float = 120.0
     llm_connect_timeout_seconds: float = 10.0
     llm_stream_read_timeout_seconds: float = 300.0
+    # 流式：等到第一条 SSE data 事件的上限。0=关闭。
+    # 不作用于首包之后的思考静默（Codex/Luna 长 reasoning 仍靠 sock_read）。
+    # xAI 保活注释会刷新 sock_read，但不能算模型已开始输出。
+    llm_stream_first_event_timeout_seconds: float = 180.0
     # cluster 准入配额（压测病灶 B2：此前全局 semaphore=5 共享、排队无上限无 429）
     # 同时运行的 cluster 上限；超限立即 429（诚实拒绝，不无限排队）
     cluster_max_concurrent: int = 3

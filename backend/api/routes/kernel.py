@@ -709,13 +709,9 @@ async def get_process(
     proc = kernel.get_process(process_id)
     if proc is None:
         raise HTTPException(status_code=404, detail=f"process not found: {process_id}")
-    data = proc.to_dict()
-    # 不向客户端返回 HMAC signature（防离线伪造材料外泄）
-    if proc.token is not None:
-        tok = proc.token.to_dict(sign=False)
-        tok.pop("signature", None)
-        data["token"] = tok
-    return data
+    from backend.kernel.process_access import process_public_dict
+
+    return process_public_dict(proc)
 
 
 @router.post("/processes/{process_id}/suspend")

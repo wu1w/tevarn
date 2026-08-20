@@ -396,7 +396,7 @@ function ChatPageInner() {
           const cached = streamSessionApi().get(sid);
           // 标记：等 sync 完成后再启假 Resuming 超时（弱网 auth+sync 常 >4s）
           syncSeenForResumeRef.current[sid] = false;
-          if (cached.agentRunning || cached.isStreaming || cached.content || cached.tools.length) {
+          if (cached.agentRunning || cached.isStreaming) {
             setIsStreaming(true);
             setStreamingContent(cached.content || '');
             streamingContentRef.current = cached.content || '';
@@ -509,7 +509,13 @@ function ChatPageInner() {
   React.useEffect(() => {
     const sid = currentSession?.id;
     if (!sid) return;
-    if (!isStreaming && !streamingContent && liveToolCalls.length === 0) return;
+    if (!isStreaming) {
+      const prev = streamSessionApi().get(sid);
+      if (prev.isStreaming || prev.agentRunning) {
+        streamSessionApi().markIdle(sid);
+      }
+      return;
+    }
     streamSessionApi().save(sid, {
       isStreaming,
       agentRunning: isStreaming,
@@ -858,13 +864,8 @@ function ChatPageInner() {
           }
         }
       } else if (msg.state === 'idle') {
-              if (msg.agent_running) {
-                // Duplicate-ack / stale idle while the agent is still running.
-                // Must not unlock the composer or freeze a ghost assistant bubble.
-                if (msg.detail) setStreamStatusDetail(msg.detail);
-                lastStreamActivityRef.current = Date.now();
-                return;
-              }
+              // Duplicate-ack no longer sends idle. An idle here means the
+              // turn ended — even if asyncio is still unwinding.
               setStoppingSid(sid, false);
               setStreamStuck(false);
               setIsStreaming(false);
@@ -893,7 +894,7 @@ function ChatPageInner() {
                 }, 0);
               }
             }
-          }, [addMessage, addToast, currentSession, loadMessages, t, isStoppingSid, setStoppingSid]);
+          }, [addMessage, addToast, currentSession?.id, loadMessages, t, isStoppingSid, setStoppingSid]);
 
   const handleGoalUpdate = useCallback((msg: GoalUpdateMessage) => {
       if (msg.goal) {
@@ -971,7 +972,9 @@ function ChatPageInner() {
         if (ev === 'run.completed') setStreamStatusDetail(t('run.done'));
         else if (ev === 'run.failed') setStreamStatusDetail(t('run.runFailed'));
         else setStreamStatusDetail(t('run.cancelled'));
-        // do not return — allow topic-style fallthrough no-ops
+        setIsStreaming(false);
+        const doneSid = currentSession?.id || '';
+        if (doneSid) streamSessionApi().markIdle(doneSid);
       }
       if (msg.topic === 'run.status_changed' || ev === 'run.status_changed') {
         const to = String((d as { to?: unknown }).to ?? '');
@@ -1010,7 +1013,7 @@ function ChatPageInner() {
           );
         }
       }
-    }, [t, appendAgentOutputTo]);
+    }, [t, appendAgentOutputTo, currentSession?.id]);
 
   
   const handleSyncResponse = useCallback((payload: {
@@ -1298,7 +1301,7 @@ const handleUserMessageAck = useCallback(
     return () => {
       cancelled = true;
       window.clearTimeout(syncTimer);
-      useChatWsBridge.getState().setHandlers(null);
+      // 不要 setHandlers(null)：换绑瞬间会丢掉 epilogue 的 idle，store 一直 running。
     };
   }, [
     handleStreamDelta,
@@ -1811,7 +1814,7 @@ const handleUserMessageAck = useCallback(
         });
       }
       const cached = streamSessionApi().get(sessionId);
-      if (cached.agentRunning || cached.isStreaming || cached.content) {
+      if (cached.agentRunning || cached.isStreaming) {
         setIsStreaming(true);
         setStreamingContent(cached.content || '');
         streamingContentRef.current = cached.content || '';

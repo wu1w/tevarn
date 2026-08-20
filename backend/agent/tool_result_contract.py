@@ -29,6 +29,9 @@ from typing import Any
 # file_read keeps higher budget so executor pagination remains authority.
 TOOL_RESULT_BUDGET: dict[str, int] = {
     "file_read": 100_000,
+    # Paging tool: output IS the requested slice. Budget is a safety net for
+    # callers that only consult the map; normalize/truncate must not re-envelope.
+    "result_load": 200_000,
     "grep": 900,
     "glob": 600,
     # cargo/rustc diagnostics are long; 1200 forced head+tail thrash on E0xxx lists
@@ -58,6 +61,17 @@ SPILL_PREVIEW_CHARS = int(
 )
 
 _WRITE_TOOLS = frozenset({"file_write", "edit", "apply_patch", "desktop_write_file"})
+
+# Tools whose job is "return a requested slice" (offset / max_chars / limit).
+# The executor page is the result — never re-spill or head+tail it.
+# Do not special-case individual search backends (Tavily etc.).
+_SLICE_PASSTHROUGH_TOOLS = frozenset({"result_load"})
+
+
+def _is_slice_passthrough(tool_name: str) -> bool:
+    return (tool_name or "").strip().lower() in _SLICE_PASSTHROUGH_TOOLS
+
+
 _HANDLE_ID_RE = re.compile(
     r"tool_result_handle\s+id=([A-Za-z0-9_-]+)|use result_load id=([A-Za-z0-9_-]+)",
     re.I,
@@ -119,6 +133,8 @@ def tool_budget(tool_name: str, *, max_chars: int | None = None) -> int:
 def truncate_for_llm(tool_name: str, raw_result: str, *, budget: int | None = None) -> str:
     """Head+tail truncate when spill is unavailable or result is mid-size."""
     text = raw_result or ""
+    if _is_slice_passthrough(tool_name):
+        return text
     if "[Background" in text or "process_id=" in text[:200]:
         return text
     if text.startswith("[Security Blocked]") or text.startswith("[Denied]"):
@@ -221,6 +237,7 @@ def normalize_tool_result(
     max_chars: int | None = None,
     tool_name: str = "",
     process_id: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Coerce to str; inline if under budget; else spill envelope or head+tail."""
     if result is None:
@@ -244,6 +261,9 @@ def normalize_tool_result(
         text = f"[Error] Tool '{tool_name or '?'}' returned empty result"
 
     name = (tool_name or "").strip()
+    # Paging tool output IS the page. Re-spill would hide it behind a new handle.
+    if _is_slice_passthrough(name):
+        return text
     budget = tool_budget(name, max_chars=max_chars)
 
     # Short write acks always inline
@@ -258,6 +278,8 @@ def normalize_tool_result(
     pid = (process_id or "").strip() or "orphan"
     thr = max(int(SPILL_THRESHOLD), budget)
     if len(text) >= thr:
+        hid = ""
+        ctx = ""
         try:
             from backend.kernel import get_kernel
 
@@ -277,18 +299,37 @@ def normalize_tool_result(
             if isinstance(r, dict) and r.get("spilled"):
                 ctx = str(r.get("context") or "")
                 hid = _extract_handle_id(r, ctx)
-                if hid:
-                    return format_spill_envelope(
-                        handle_id=hid,
-                        tool_name=name or "tool",
-                        full_text=text,
-                        bytes_hint=len(text),
-                    )
-                # spilled but no id — fall back to kernel context if present
-                if ctx:
-                    return ctx
         except Exception:
             pass
+
+        # Session store is the durable source of truth: same id survives
+        # kernel process drop. Always persist when we emit a handle
+        # (empty session_id → "orphan").
+        try:
+            from backend.agent.result_handle_store import put
+
+            hid = put(
+                session_id,
+                text,
+                tool=name or "tool",
+                handle_id=hid or None,
+            )
+            return format_spill_envelope(
+                handle_id=hid,
+                tool_name=name or "tool",
+                full_text=text,
+                bytes_hint=len(text),
+            )
+        except Exception:
+            if hid:
+                return format_spill_envelope(
+                    handle_id=hid,
+                    tool_name=name or "tool",
+                    full_text=text,
+                    bytes_hint=len(text),
+                )
+            if ctx:
+                return ctx
 
     # Spill unavailable / mid-size over budget → head+tail only
     return truncate_for_llm(name, text, budget=budget)

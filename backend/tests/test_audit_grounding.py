@@ -102,3 +102,11 @@ def test_extract_paths_basic():
     )
     assert any("loop.py" in p for p in paths)
     assert any("identity.py" in p for p in paths)
+
+
+def test_extract_paths_ignores_api_knobs():
+    paths = extract_cited_paths(
+        "用 `/fast` 或 `reasoning_effort=low/medium/xhigh`，"
+        "对照 `QwenLM/Qwen-Agent`，不要当成本地文件。"
+    )
+    assert paths == []

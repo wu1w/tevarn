@@ -228,6 +228,12 @@ class LoopToolsMixin:
             arguments.setdefault("_identity_name", str(self._identity_name))
         caps = getattr(self, "_identity_capabilities", None)
         if caps is not None:
+            try:
+                from backend.agent.grant_store import expand_implied_tool_caps
+
+                caps = expand_implied_tool_caps(list(caps)) or list(caps)
+            except Exception:
+                caps = list(caps)
             arguments.setdefault("_identity_capabilities", list(caps))
         # 编制员工：贯穿工具权限 / 危险命令 / 提权路径
         if getattr(self, "_workforce", False) or str(

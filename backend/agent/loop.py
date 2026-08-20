@@ -120,6 +120,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         self._config_micro_loop = None
         self._thrash_force_final_override = None
         self._pseudo_tool_leak_streak = 0
+        self._diag_probe_rounds = 0
+        self._status_read_counts = {}
         self._terminal_event_emitted = False
         self._llm_fail_streak = 0
         self._streamed_visible = ""
@@ -1086,6 +1088,16 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     create_kwargs.pop("intent", None)
                     kernel_proc = await kernel.create_process(_akey, **create_kwargs)
                 await kernel.mark_running(kernel_proc.id)
+                try:
+                    _inbox_id = str(getattr(self, "_inbox_item_id", "") or "").strip()
+                    if _inbox_id:
+                        from backend.kernel.workforce import get_workforce_inbox
+
+                        _inbox = get_workforce_inbox()
+                        if _inbox is not None and hasattr(_inbox, "attach_process_id"):
+                            await _inbox.attach_process_id(_inbox_id, kernel_proc.id)
+                except Exception as _ap:
+                    logger.debug("inbox process_id attach skip: %s", _ap)
                 # H2-A2: production must not run with capabilities=None (compat full-open)
                 try:
                     from backend.kernel.production_guard import (
@@ -1702,6 +1714,10 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         """实际的 Agent Loop 逻辑（已被外层锁保护）"""
         logger.info(f"Agent loop started for session {session_id}, mode={mode}")
         logger.debug("loop start should_stop=%s", self._should_stop)
+        try:
+            await self.session_repo.update_status(session_id, "thinking")
+        except Exception as _st_e:
+            logger.debug("session thinking status skip: %s", _st_e)
 
         # Durable Run：进入规划阶段
         _rc = getattr(self, "_run_recorder", None)
@@ -1895,24 +1911,37 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             # Model context: strip thinking tags + collapse force_final scare dumps
             # so auto-resume does not re-feed long 「强制收束」inventories.
             # DeepSeek V4 tools：thinking 正文需还原为 reasoning_content 字段回传。
+            # Prefer reasoning stashed in tool_calls JSON (no DB column); then <thinking>.
+            tcs = getattr(h, "tool_calls", None)
             _reasoning_from_hist = ""
-            if h.role == "assistant" and raw_content:
-                try:
-                    from backend.agent.thinking_format import extract_reasoning_content
-
-                    _reasoning_from_hist = extract_reasoning_content(raw_content)
-                except Exception:
-                    _reasoning_from_hist = ""
-                raw_content = _strip_think(raw_content)
+            if h.role == "assistant":
                 try:
                     from backend.agent.thinking_format import (
-                        strip_force_final_scare_for_context as _strip_ff,
+                        split_reasoning_from_tool_calls,
                     )
 
-                    raw_content = _strip_ff(raw_content)
+                    tcs, _reasoning_from_hist = split_reasoning_from_tool_calls(tcs)
+                    if isinstance(tcs, list) and not tcs:
+                        tcs = None
                 except Exception:
                     pass
-            tcs = getattr(h, "tool_calls", None)
+                if not _reasoning_from_hist and raw_content:
+                    try:
+                        from backend.agent.thinking_format import extract_reasoning_content
+
+                        _reasoning_from_hist = extract_reasoning_content(raw_content)
+                    except Exception:
+                        _reasoning_from_hist = ""
+                if raw_content:
+                    raw_content = _strip_think(raw_content)
+                    try:
+                        from backend.agent.thinking_format import (
+                            strip_force_final_scare_for_context as _strip_ff,
+                        )
+
+                        raw_content = _strip_ff(raw_content)
+                    except Exception:
+                        pass
             # 严格 API：assistant 带 tool_calls 时 content 不能是 ""（须 null）
             if h.role == "assistant" and tcs and not (raw_content or "").strip():
                 item: dict[str, Any] = {"role": "assistant", "content": None, "tool_calls": tcs}
@@ -1942,6 +1971,23 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             history_dicts = normalize_history_for_llm(history_dicts)
         except Exception as _nh_e:
             logger.debug("normalize_history_for_llm skip: %s", _nh_e)
+
+        # Collapse completed prior-turn tool traces BEFORE stripping the current
+        # user (last user = this turn, so all earlier configure/pytest/file dumps
+        # become a short summary and cannot re-enter the next prompt).
+        try:
+            from backend.agent.context_pipeline import collapse_prior_turn_tool_traces
+
+            history_dicts, _n_prior = collapse_prior_turn_tool_traces(history_dicts)
+            if _n_prior:
+                logger.info(
+                    "collapsed %s prior-turn tool rows session=%s kept=%s",
+                    _n_prior,
+                    session_id,
+                    len(history_dicts),
+                )
+        except Exception as _col_e:
+            logger.debug("collapse prior-turn tools skip: %s", _col_e)
 
         # 刚写入的用户消息已在 history 末尾，build 时不再重复追加同一条
         # （context 仍会 append user_input；下面剥离 history 中与当前输入相同的尾部 user）
@@ -2365,6 +2411,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             _kind = "coding"
             if getattr(self, "_config_micro_loop", None):
                 _kind = "thin"
+            elif getattr(self, "_rollup_turn", False):
+                _kind = "thin"
             elif is_thin_chat_intent(_ui) and not goal_mode:
                 _kind = "thin"
             elif is_search_only_intent(_ui) and not goal_mode:
@@ -2531,17 +2579,20 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 self.max_iterations = min(int(self.max_iterations or _cap), max(2, _cap))
                 _allow = set(_ml.get("tools") or ()) or {
                     "manage_mcp",
+                    "manage_goal",
                     "clarify",
                     "current_time",
                     "update_config",
                     "get_system_status",
                     "list_available_models",
                 }
+                _allow.add("manage_goal")
 
                 def _micro_keep(t: dict) -> bool:
                     fn = t.get("function") if isinstance(t.get("function"), dict) else {}
                     name = str((fn or {}).get("name") or t.get("name") or "")
-                    return name in _allow
+                    # Verify installed MCP servers; close the Goal when done.
+                    return name in _allow or name.startswith("mcp_")
 
                 before_ml = len(tools or [])
                 tools = [
@@ -2891,35 +2942,13 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         if (
             not _is_wf_llm
             and getattr(self, "_llm_snapshot_override", None) is None
-            and isinstance(llm_snapshot, dict)
-            and not bool(llm_snapshot.get("locked"))
         ):
             try:
-                g_model = str(getattr(settings, "llm_model", "") or "").strip()
-                g_pid = str(
-                    getattr(settings, "llm_catalog_provider_id", "") or ""
-                ).strip()
-                g_url = str(getattr(settings, "llm_base_url", "") or "").strip().rstrip(
-                    "/"
+                from backend.services.llm.factory import follow_global_llm_snapshot
+
+                llm_snapshot = follow_global_llm_snapshot(
+                    llm_snapshot if isinstance(llm_snapshot, dict) else None
                 )
-                s_model = str(llm_snapshot.get("model") or "").strip()
-                s_pid = str(llm_snapshot.get("provider_id") or "").strip()
-                s_url = str(llm_snapshot.get("base_url") or "").strip().rstrip("/")
-                stale = bool(g_model) and (
-                    (g_model != s_model)
-                    or (g_pid and s_pid and g_pid != s_pid)
-                    or (g_url and s_url and g_url != s_url)
-                )
-                if stale:
-                    logger.info(
-                        "follow global LLM (session snap stale) "
-                        "session=%s/%s → global=%s/%s",
-                        s_pid or "-",
-                        s_model or "-",
-                        g_pid or "-",
-                        g_model or "-",
-                    )
-                    llm_snapshot = None
             except Exception as _fs:
                 logger.debug("follow global LLM skip: %s", _fs)
         # 会话稳定 prompt_cache_key：同会话多轮强制同一 namespace（提高 cache_read）
@@ -3223,6 +3252,9 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
 
         # 分段预算：单段 max_iterations，可自动续多段（Goal / 长任务）
         _auto_cont = bool(getattr(settings, "agent_auto_continue", True))
+        _auto_ov = getattr(self, "_auto_continue", None)
+        if isinstance(_auto_ov, bool):
+            _auto_cont = _auto_ov
         _max_seg = int(getattr(settings, "agent_auto_continue_max_segments", 5) or 1)
         if not _auto_cont:
             _max_seg = 1
@@ -3258,6 +3290,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
         _pure_read_streak = 0
         _rounds_since_manage_goal = 0
         _rounds_since_write = 0
+        _diag_probe_rounds = 0
+        _status_read_counts: dict = {}
         _result_load_same_streak = 0
         _last_result_handle = ""
         _cargo_fix_streak = 0
@@ -3304,7 +3338,33 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
             1, int(getattr(settings, "agent_process_snapshot_every", 10) or 10)
         )
 
-        for _global_iter in range(_total_iters + 1):  # +1 允许 grace 终答
+        _hit_iter_cap = False
+        for _global_iter in range(10_000):  # +1 grace; pack expand may raise cap
+            try:
+                _want = int(getattr(self, "max_iterations", 0) or 0)
+                if _want > int(_seg_size or 0):
+                    _seg_size = _want
+                    _total_iters = int(_seg_size) * max(1, int(_max_seg))
+                    try:
+                        _iter_budget.max_total = max(
+                            int(_iter_budget.max_total), int(_total_iters)
+                        )
+                    except Exception:
+                        pass
+                    if _kpid_iter:
+                        try:
+                            from backend.kernel import get_kernel
+
+                            _k_bump = get_kernel()
+                            if hasattr(_k_bump, "iteration_set_budget"):
+                                _k_bump.iteration_set_budget(_kpid_iter, _total_iters)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if _global_iter > _total_iters:
+                _hit_iter_cap = True
+                break
             # P0 control_inbox：用户 steer 在下一安全边界注入（短 controller note）
             try:
                 from backend.agent.control_inbox import (
@@ -3635,10 +3695,14 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 logger.info(f"Agent loop stopped by signal for session {session_id}")
                 self.last_exit_reason = "stopped_by_user"
                 _loop_exit_reason = "stopped_by_user"
-                if accumulated_content:
-                    final_content = accumulated_content
-                else:
-                    final_content = final_content or ""
+                try:
+                    from backend.agent.user_channel import user_visible_content
+
+                    final_content = user_visible_content(
+                        accumulated_content or final_content or ""
+                    )
+                except Exception:
+                    final_content = accumulated_content or final_content or ""
                 break
 
             if _deadline is not None and _time.monotonic() > _deadline:
@@ -3896,6 +3960,19 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 messages.append(assistant_msg)
 
                 # 持久化中间 assistant（tool_calls）；思考与抢答正文不进用户气泡
+                # Stash reasoning inside tool_calls JSON (no reasoning column).
+                persist_tcs = assistant_tool_calls
+                if _reasoning_keep:
+                    try:
+                        from backend.agent.thinking_format import (
+                            stash_reasoning_in_tool_calls,
+                        )
+
+                        persist_tcs = stash_reasoning_in_tool_calls(
+                            assistant_tool_calls, _reasoning_keep
+                        )
+                    except Exception:
+                        persist_tcs = assistant_tool_calls
                 try:
                     await self._save_message(
                         session_id,
@@ -3903,7 +3980,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                         content_for_chat_persist(
                             accumulated_content, has_tool_calls=True
                         ),
-                        tool_calls=assistant_tool_calls,
+                        tool_calls=persist_tcs,
                     )
                 except Exception as e:
                     msg = str(e)
@@ -3968,6 +4045,8 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                     pure_read_streak=_pure_read_streak,
                     rounds_since_manage_goal=_rounds_since_manage_goal,
                     rounds_since_write=_rounds_since_write,
+                    diag_probe_rounds=_diag_probe_rounds,
+                    status_read_counts=_status_read_counts,
                     result_load_same_streak=_result_load_same_streak,
                     last_result_handle=_last_result_handle,
                     cargo_fix_streak=_cargo_fix_streak,
@@ -4094,6 +4173,11 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 _rounds_since_write = int(
                     getattr(_tr_state, "rounds_since_write", 0) or 0
                 )
+                _diag_probe_rounds = int(
+                    getattr(_tr_state, "diag_probe_rounds", 0) or 0
+                )
+                _src = getattr(_tr_state, "status_read_counts", None)
+                _status_read_counts = dict(_src) if isinstance(_src, dict) else {}
                 _result_load_same_streak = int(
                     getattr(_tr_state, "result_load_same_streak", 0) or 0
                 )
@@ -4185,7 +4269,7 @@ class NexusAgentLoop(LoopIOMixin, LoopClusterMixin, LoopToolsMixin, AgentLoopBas
                 except Exception:
                     pass
                 break
-        else:
+        if _hit_iter_cap:
             # 用尽全部分段预算（工具/迭代段，不是 token 预算）
             logger.warning(
                 "Max iteration budget (%s segs x %s) reached for session %s",

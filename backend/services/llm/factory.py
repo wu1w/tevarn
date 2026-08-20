@@ -28,13 +28,43 @@ class LLMServiceFactory:
     """LLM 服务工厂类"""
 
     _instance: LLMService | None = None
+    _oauth_sync_at: float = 0.0
+    _OAUTH_SYNC_TTL_SEC = 30.0
 
     @classmethod
     def get_service(cls) -> LLMService:
-        """获取 LLM 服务单例"""
+        """获取 LLM 服务单例。
+
+        OAuth 供应商会定期对照 catalog：设置页 refresh 过的新 token
+        必须能替换单例里握着的过期 Key，否则 chat/completions 会 403。
+        """
+        cls._sync_live_global_credentials()
         if cls._instance is None:
             cls._instance = cls._create_service()
         return cls._instance
+
+    @classmethod
+    def _sync_live_global_credentials(cls) -> None:
+        import time
+
+        now = time.monotonic()
+        if cls._instance is not None and (now - cls._oauth_sync_at) < cls._OAUTH_SYNC_TTL_SEC:
+            return
+        pid = cls._active_catalog_provider_id()
+        base_url = str(getattr(settings, "llm_base_url", "") or "")
+        if not pid and not base_url:
+            cls._oauth_sync_at = now
+            return
+        fresh = cls._resolve_live_credentials(pid, base_url)
+        cls._oauth_sync_at = time.monotonic()
+        if not fresh:
+            return
+        new_key = str(fresh.get("api_key") or "")
+        if not new_key or cls._instance is None:
+            return
+        inst_key = str(getattr(cls._instance, "api_key", "") or "")
+        if inst_key and inst_key != new_key:
+            cls.reset()
 
     @classmethod
     def _active_catalog_provider_id(cls) -> str:
@@ -107,6 +137,7 @@ class LLMServiceFactory:
     def reset(cls) -> None:
         """重置单例（主要用于测试）"""
         cls._instance = None
+        cls._oauth_sync_at = 0.0
 
     @classmethod
     def get_service_for_snapshot(cls, snapshot: dict | None) -> LLMService:
@@ -222,6 +253,8 @@ class LLMServiceFactory:
             return True
         if s in ("***", "changeme", "placeholder"):
             return True
+        if "..." in s and len(s) <= 16:
+            return True
         return False
 
     @classmethod
@@ -275,20 +308,16 @@ class LLMServiceFactory:
                 if not p:
                     return None
                 key = mc._active_api_key(p)  # noqa: SLF001
-                # refresh 成功：持久化 catalog + 对齐 runtime key，避免下轮仍用旧 token
+                # refresh 成功或 catalog/runtime 分叉：落盘 + 重置全局单例
                 try:
-                    if key and str(key) != str(key_before or ""):
-                        try:
-                            await mc.save_catalog(repo, cat)
-                        except Exception as pe:
-                            logger.debug("persist refreshed oauth catalog failed: %s", pe)
-                        from backend.core.config import settings as _s
-                        from backend.core.runtime_settings import apply_settings_dict
-
-                        if str(getattr(_s, "llm_api_key", "") or "") != str(key):
-                            apply_settings_dict({"llm_api_key": key}, reset=False)
-                except Exception:
-                    pass
+                    await mc.sync_oauth_runtime(
+                        cat,
+                        repo=repo,
+                        key_before=key_before,
+                        persist_catalog=True,
+                    )
+                except Exception as _sync_e:
+                    logger.debug("sync_oauth_runtime skipped: %s", _sync_e)
                 return {
                     "api_key": key or None,
                     "base_url": (p.get("llm_base_url") or "").rstrip("/") or None,
@@ -311,3 +340,57 @@ class LLMServiceFactory:
         except Exception as e:
             logger.debug("live credential resolve failed: %s", e)
             return None
+
+
+def build_global_llm_snapshot() -> dict:
+    """当前全局选型的会话快照（含 catalog provider_id，供 OAuth 热刷新）。"""
+    return {
+        "provider": str(getattr(settings, "llm_provider", "") or "openai-compatible"),
+        "provider_id": LLMServiceFactory._active_catalog_provider_id(),
+        "model": str(getattr(settings, "llm_model", "") or ""),
+        "base_url": str(getattr(settings, "llm_base_url", "") or "").rstrip("/"),
+        "api_key": getattr(settings, "llm_api_key", None),
+    }
+
+
+def follow_global_llm_snapshot(llm_snapshot: dict | None) -> dict:
+    """会话快照缺失、过期或与全局选型不一致时，改走当前全局模型。
+
+    始终返回带 provider 的 dict，避免 get_service_for_snapshot(None) 退回
+    不刷新 OAuth 的进程级单例。
+    locked=True 的快照原样返回。
+    """
+    global_snap = build_global_llm_snapshot()
+    if not isinstance(llm_snapshot, dict):
+        return global_snap
+    if bool(llm_snapshot.get("locked")):
+        return llm_snapshot
+    g_model = str(global_snap.get("model") or "").strip()
+    g_pid = str(global_snap.get("provider_id") or "").strip()
+    g_url = str(global_snap.get("base_url") or "").strip().rstrip("/")
+    s_model = str(llm_snapshot.get("model") or "").strip()
+    s_pid = str(llm_snapshot.get("provider_id") or "").strip()
+    s_url = str(llm_snapshot.get("base_url") or "").strip().rstrip("/")
+    stale = bool(g_model) and (
+        (g_model != s_model)
+        or (g_pid and s_pid and g_pid != s_pid)
+        or (g_url and s_url and g_url != s_url)
+    )
+    if stale or not s_model:
+        logger.info(
+            "follow global LLM (session snap stale) session=%s/%s → global=%s/%s",
+            s_pid or "-",
+            s_model or "-",
+            g_pid or "-",
+            g_model or "-",
+        )
+        return global_snap
+    if not s_pid and g_pid:
+        out = dict(llm_snapshot)
+        out["provider_id"] = g_pid
+        if not out.get("provider"):
+            out["provider"] = global_snap.get("provider")
+        if not out.get("base_url"):
+            out["base_url"] = g_url
+        return out
+    return llm_snapshot

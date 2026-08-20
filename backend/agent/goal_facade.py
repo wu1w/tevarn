@@ -237,6 +237,9 @@ THRASH_EXIT_REASONS: frozenset[str] = frozenset(
         "llm_stream_error",
         "rust_diag",
         "same_tool_fail",
+        # Controller wrap: another auto-resume just re-hits the same gate.
+        "diag_enough",
+        "no_write_ignored",
     }
 )
 

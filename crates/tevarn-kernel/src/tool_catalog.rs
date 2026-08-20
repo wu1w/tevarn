@@ -97,6 +97,12 @@ pub fn capability_matches(target: &str, capabilities: &BTreeSet<String>) -> bool
         if capabilities.contains(abstract_cap) {
             return true;
         }
+        // result_load → file_read → file_rw
+        if let Some(broader) = crew_cap_for_tool(abstract_cap) {
+            if capabilities.contains(broader) {
+                return true;
+            }
+        }
     }
     // Dynamic MCP tools (mcp_*) — no catalog entry; allow under manage_mcp / mcp
     // so Python can mount runtime tools without rebuilding host for every server tool.
@@ -132,8 +138,8 @@ pub fn tools_for_capabilities(capabilities: Option<&[String]>) -> Option<Vec<Str
     for c in &set {
         tools.insert(c.clone());
     }
-    for (tool, abstract_cap) in TOOL_TO_CREW_CAP {
-        if set.contains(*tool) || set.contains(*abstract_cap) {
+    for (tool, _) in TOOL_TO_CREW_CAP {
+        if capability_matches(tool, &set) {
             tools.insert((*tool).to_string());
         }
     }
@@ -179,6 +185,16 @@ mod tests {
         assert!(capability_matches("file_read", &caps));
         assert!(capability_matches("grep", &caps));
         assert!(!capability_matches("terminal", &caps));
+    }
+
+    #[test]
+    fn file_read_or_rw_covers_result_load() {
+        let via_read: BTreeSet<String> = ["file_read".into()].into_iter().collect();
+        assert!(capability_matches("result_load", &via_read));
+        let via_rw: BTreeSet<String> = ["file_rw".into()].into_iter().collect();
+        assert!(capability_matches("result_load", &via_rw));
+        let none: BTreeSet<String> = ["command".into()].into_iter().collect();
+        assert!(!capability_matches("result_load", &none));
     }
 
     #[test]

@@ -233,9 +233,14 @@ def _try_rust_decide_tool(
             pass
         # Keep identity caps for steward layer (strings only)
         if isinstance(args.get("_identity_capabilities"), (list, tuple)):
-            safe_args["_identity_capabilities"] = [
-                str(x) for x in args["_identity_capabilities"]
-            ]
+            raw_caps = [str(x) for x in args["_identity_capabilities"]]
+            try:
+                from backend.agent.grant_store import expand_implied_tool_caps
+
+                raw_caps = expand_implied_tool_caps(raw_caps) or raw_caps
+            except Exception:
+                pass
+            safe_args["_identity_capabilities"] = raw_caps
         if args.get("_identity_id"):
             safe_args["_identity_id"] = str(args["_identity_id"])
         if args.get("_workforce") is True:

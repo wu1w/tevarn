@@ -16,7 +16,7 @@ import logging
 import re
 import time as _time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from backend.core.config import settings
@@ -72,6 +72,10 @@ class ToolRoundState:
     cargo_error_class: str = ""  # compile_source | path_env | …
     # simple-session turn: block re-adding crew via use_tool_pack
     simple_turn: bool = False
+    # Product self-check / 基础检测: probe rounds + status-read signatures
+    diag_probe_rounds: int = 0
+    status_read_counts: dict = field(default_factory=dict)
+    had_work_this_run: bool = False
 
 
 # T1：可安全并发的只读风险等级。写类/命令类一律串行，避免「并发读 + 写同一文件」竞态。
@@ -1539,37 +1543,14 @@ async def run_tool_round(
         logger.debug("multi-search spill converge skip: %s", _ms_e)
 
     # ── Rust toolchain diagnosis thrash (where/dir/rustup/_diag 复读) ──
+    # Gate on the command actually run — never file bodies / pytest output.
     try:
         from backend.agent.decisive import tool_names_from_calls as _tn_rd
+        from backend.agent.progress_guard import rust_diag_commands_from_calls as _rd_cmds
 
         _rd_names = _tn_rd(tool_calls)
-        _rd_blob = " ".join(
-            str(getattr(tc, "result", None) or getattr(tc, "output", None) or "")[:400]
-            for tc in (tool_calls or [])
-        )
-        # also pull from messages just appended (tool role)
-        for _m in messages[-max(12, len(tool_calls) * 2) :]:
-            if isinstance(_m, dict) and _m.get("role") == "tool":
-                _rd_blob += " " + str(_m.get("content") or "")[:500]
-        _is_rust_diag = bool(
-            re.search(
-                r"(?i)Missing manifest|RUSTUP_HOME|\[Blocked\].{0,40}rustup|"
-                r"\[Blocked\].{0,40}cargo|where\s+cargo|_cargo_check|_diag_rust|"
-                r"rustup default|toolchain.*msvc|\.rustup\\toolchains",
-                _rd_blob,
-            )
-        ) or bool(
-            re.search(
-                r"(?i)(_cargo_|_diag_|_reinstall_rust|vcvars|rustup)",
-                " ".join(
-                    str(getattr(tc, "arguments", None) or getattr(tc, "args", None) or "")
-                    for tc in (tool_calls or [])
-                ),
-            )
-        )
-        _only_cmd_proc = bool(_rd_names) and all(
-            n in ("command", "process", "python", "file_write") for n in _rd_names
-        )
+        _rd_hit = _rd_cmds(tool_calls)
+        _is_rust_diag = bool(_rd_hit)
         _wrote_src = any(
             n in ("file_write", "edit", "apply_patch") for n in _rd_names
         ) and not re.search(
@@ -1579,9 +1560,10 @@ async def run_tool_round(
                 for tc in (tool_calls or [])
             ),
         )
-        if _wrote_src:
+        if _wrote_src and not _is_rust_diag:
             state.rust_diag_streak = 0
-        elif _is_rust_diag and _only_cmd_proc:
+        elif _is_rust_diag:
+
             state.rust_diag_streak = int(getattr(state, "rust_diag_streak", 0) or 0) + 1
             if state.rust_diag_streak == 1:
                 messages.append(
@@ -1603,6 +1585,10 @@ async def run_tool_round(
             # mid-implementation when cargo check / env noise co-occurred).
             if state.rust_diag_streak >= 4 and not state.force_final_no_tools:
                 state.force_final_no_tools = True
+                try:
+                    loop.last_exit_reason = "rust_diag"
+                except Exception:
+                    pass
                 messages.append(
                     {
                         "role": "system",
@@ -1687,7 +1673,8 @@ async def run_tool_round(
                     )
                 # Soft focus after 3 explore-only rounds: drop web/crew only
                 if state.explore_only_streak >= 3:
-                    state.force_final_no_tools = False
+                    if not getattr(state, "force_final_no_tools", False):
+                        state.force_final_no_tools = False
                     state.write_intent_hard_nudge = True
                     before_n = len(state.tools or [])
                     state.tools = filter_tools_coding_flex(state.tools)
@@ -1712,7 +1699,8 @@ async def run_tool_round(
                     )
             # Already focused: keep coding-flex applied every round
             if getattr(state, "write_intent_hard_nudge", False):
-                state.force_final_no_tools = False
+                if not getattr(state, "force_final_no_tools", False):
+                    state.force_final_no_tools = False
                 state.tools = filter_tools_coding_flex(state.tools)
                 state.enabled_tools_filter = filter_names_coding_flex(
                     state.enabled_tools_filter
@@ -1753,7 +1741,16 @@ async def run_tool_round(
             filter_tools_deliver_only as _ft_del,
         )
         from backend.agent.progress_guard import (
+            decide_diag_check_action as _diag_act,
+        )
+        from backend.agent.progress_guard import (
+            diag_check_force_nudge as _diag_nudge,
+        )
+        from backend.agent.progress_guard import (
             ignored_nudge_action as _nudge_act,
+        )
+        from backend.agent.progress_guard import (
+            record_status_read as _rec_sr,
         )
         from backend.agent.progress_guard import (
             is_cargo_compile_failure as _is_cf,
@@ -1819,12 +1816,93 @@ async def run_tool_round(
             elif _is_sp(_cmd):
                 _probe_cmds += 1
 
-        if _wrote_pg:
+        # Self-check / 基础检测: status reads are evidence, not idle no_write
+        _dup_status = False
+        _sr_counts = getattr(state, "status_read_counts", None)
+        if not isinstance(_sr_counts, dict) or not _sr_counts:
+            _loop_counts = getattr(loop, "_status_read_counts", None)
+            if isinstance(_loop_counts, dict) and _loop_counts:
+                _sr_counts = _loop_counts
+        if not isinstance(_sr_counts, dict):
+            _sr_counts = {}
+        state.status_read_counts = _sr_counts
+        try:
+            loop._status_read_counts = _sr_counts
+        except Exception:
+            pass
+        if not int(getattr(state, "diag_probe_rounds", 0) or 0):
+            state.diag_probe_rounds = int(
+                getattr(loop, "_diag_probe_rounds", 0) or 0
+            )
+        for _tc in tool_calls or []:
+            if _rec_sr(
+                _sr_counts,
+                str(getattr(_tc, "name", "") or ""),
+                _ext_args(_tc),
+            ):
+                _dup_status = True
+        _diag_force_after = max(
+            2, int(getattr(_st_pg, "agent_diag_check_force_after", 3) or 3)
+        )
+        from backend.agent.progress_guard import is_status_read_call as _isr
+        from backend.agent.progress_guard import round_did_work as _rdw
+        if not bool(getattr(state, "had_work_this_run", False)):
+            state.had_work_this_run = bool(
+                getattr(loop, "_had_work_this_run", False)
+            )
+        _prev_work = bool(getattr(state, "had_work_this_run", False))
+        _had_work = _rdw(
+            [
+                (str(getattr(_tc, "name", "") or ""), _ext_args(_tc))
+                for _tc in (tool_calls or [])
+            ]
+        )
+        _status_only = (not _had_work) and any(
+            _isr(str(getattr(_tc, "name", "") or ""), _ext_args(_tc))
+            for _tc in (tool_calls or [])
+        )
+        if _wrote_pg or _had_work:
+            state.diag_probe_rounds = 0
+            state.had_work_this_run = True
+            # Duplicates must not span a work gap (check → pytest → check).
+            try:
+                state.status_read_counts.clear()
+            except Exception:
+                state.status_read_counts = {}
+            _dup_status = False
+        elif _dup_status or _status_only:
+            state.diag_probe_rounds = int(
+                getattr(state, "diag_probe_rounds", 0) or 0
+            ) + 1
+        _diag_kind = _diag_act(
+            user_input=str(user_input or ""),
+            wrote=_wrote_pg,
+            had_work=_had_work,
+            had_work_this_run=_prev_work or _had_work,
+            diag_probe_rounds=int(getattr(state, "diag_probe_rounds", 0) or 0),
+            duplicate_status=_dup_status,
+            force_after=_diag_force_after,
+        )
+        try:
+            loop._diag_probe_rounds = int(
+                getattr(state, "diag_probe_rounds", 0) or 0
+            )
+            loop._had_work_this_run = bool(
+                getattr(state, "had_work_this_run", False)
+            )
+            loop._status_read_counts = state.status_read_counts
+        except Exception:
+            pass
+
+        if _wrote_pg or _had_work:
             state.pure_read_streak = 0
             state.rounds_since_write = 0
             state.cargo_fix_streak = 0
             state.must_write_before_cargo = False
             state.cargo_error_paths = ""
+        elif _diag_kind != "none":
+            # Diagnostic probes are the work — do not count as cargo no_write
+            pass
         else:
             state.rounds_since_write = int(
                 getattr(state, "rounds_since_write", 0) or 0
@@ -2052,7 +2130,36 @@ async def run_tool_round(
         _nw_act = _nudge_act(
             current=_rsw, first_at=_nw, grace=_nw_grace, even_only=True
         )
-        if _nw_act != "none" and not state.force_final_no_tools:
+        if (
+            _diag_kind == "force_final"
+            and not state.force_final_no_tools
+        ):
+            state.force_final_no_tools = True
+            try:
+                loop.last_exit_reason = "diag_enough"
+            except Exception:
+                pass
+            messages.append(
+                {
+                    "role": "system",
+                    "content": _diag_nudge(
+                        rounds=int(getattr(state, "diag_probe_rounds", 0) or 0),
+                        duplicate=_dup_status,
+                    ),
+                }
+            )
+            logger.info(
+                "diag_check force_final rounds=%s dup=%s session=%s",
+                getattr(state, "diag_probe_rounds", 0),
+                _dup_status,
+                session_id,
+            )
+
+        if (
+            _nw_act != "none"
+            and not state.force_final_no_tools
+            and _diag_kind == "none"
+        ):
             if _nw_act == "force_final":
                 state.force_final_no_tools = True
                 try:
@@ -2135,8 +2242,11 @@ async def run_tool_round(
             if getattr(loop, "last_exit_reason", "") not in (
                 "no_write_ignored",
                 "converge_ignored",
+                "diag_enough",
+                "rust_diag",
             ):
-                state.force_final_no_tools = False
+                if not getattr(state, "force_final_no_tools", False):
+                    state.force_final_no_tools = False
             state.deliver_mode = True
             state.tools = _ft_del(state.tools)
             state.enabled_tools_filter = _fn_del(
@@ -2520,7 +2630,8 @@ async def run_tool_round(
                         else:
                             _mw_ok = True
                     state.must_write_before_cargo = _mw_ok
-                    state.force_final_no_tools = False
+                    if not getattr(state, "force_final_no_tools", False):
+                        state.force_final_no_tools = False
                     try:
                         from backend.agent.progress_guard import (
                             filter_names_deliver_only as _fnd2,
@@ -2587,7 +2698,8 @@ async def run_tool_round(
                         write_intent_nudge_text as _win,
                     )
 
-                    state.force_final_no_tools = False
+                    if not getattr(state, "force_final_no_tools", False):
+                        state.force_final_no_tools = False
                     state.write_intent_hard_nudge = True
                     state.tools = _ftw(state.tools)
                     state.enabled_tools_filter = _fnw(
@@ -2611,7 +2723,8 @@ async def run_tool_round(
                 )
             elif _only_process and _bg_running:
                 # Never force_final on poll-while-running (cargo test can be long).
-                state.force_final_no_tools = False
+                if not getattr(state, "force_final_no_tools", False):
+                    state.force_final_no_tools = False
                 messages.append(
                     {
                         "role": "system",
@@ -2718,7 +2831,8 @@ async def run_tool_round(
                     if not _soft_cf:
                         state.must_write_before_cargo = True
                         state.deliver_mode = True
-                    state.force_final_no_tools = False
+                    if not getattr(state, "force_final_no_tools", False):
+                        state.force_final_no_tools = False
                     _ps = _pcp(_blob_fail)
                     if _ps:
                         state.cargo_error_paths = ",".join(_ps[:5])
@@ -2777,6 +2891,7 @@ async def run_tool_round(
         from backend.agent.tool_policy import merge_tools_with_packs
 
         expanded_any = False
+        expanded_packs: list[str] = []
         for tc in tool_calls:
             if getattr(tc, "name", None) != "use_tool_pack":
                 continue
@@ -2817,6 +2932,31 @@ async def run_tool_round(
                     )
                     continue
             new_filter = merge_tools_with_packs(state.enabled_tools_filter, packs)
+            if new_filter is not None and "result_load" not in new_filter:
+                have_rl = False
+                try:
+                    from backend.tools.registry import ToolRegistry
+
+                    have_rl = ToolRegistry.get("result_load") is not None
+                except Exception:
+                    have_rl = False
+                if not have_rl:
+                    for t in state.tools or []:
+                        if not isinstance(t, dict):
+                            continue
+                        fn = (
+                            t.get("function")
+                            if isinstance(t.get("function"), dict)
+                            else {}
+                        )
+                        n = str((fn or {}).get("name") or t.get("name") or "")
+                        if n == "result_load":
+                            have_rl = True
+                            break
+                if have_rl or any(
+                    pk in {"web", "mcp", "coding", "integrations"} for pk in packs
+                ):
+                    new_filter = list(new_filter) + ["result_load"]
             # simple_turn: never accept filter=None (ALL tools)
             if state.simple_turn and new_filter is None:
                 logger.info("use_tool_pack: rejected ALL expand on simple_turn")
@@ -2828,6 +2968,7 @@ async def run_tool_round(
                 state.enabled_tools_filter = new_filter
                 expanded_any = True
             if packs:
+                expanded_packs.extend(packs)
                 for pk in packs:
                     if pk not in state.scene_plan.packs:
                         state.scene_plan.packs.append(pk)
@@ -2908,6 +3049,21 @@ async def run_tool_round(
                 len(state.tools),
                 "ALL" if state.enabled_tools_filter is None else len(state.enabled_tools_filter),
             )
+            if any(pk in {"web", "mcp", "integrations"} for pk in expanded_packs):
+                try:
+                    from backend.agent.tool_policy import scene_max_iterations
+
+                    search_cap = int(scene_max_iterations("search") or 15)
+                    cur = int(getattr(loop, "max_iterations", 0) or 0)
+                    if search_cap > cur:
+                        loop.max_iterations = search_cap
+                        logger.info(
+                            "use_tool_pack raised max_iterations %s→%s (web/mcp)",
+                            cur,
+                            search_cap,
+                        )
+                except Exception as _cap_e:
+                    logger.debug("pack expand iter cap skip: %s", _cap_e)
     except Exception as e:
         logger.debug("use_tool_pack expand skipped: %s", e)
     state.tool_rounds += 1
@@ -3041,11 +3197,22 @@ async def run_tool_round(
                 from backend.agent.exit_reasons import describe_exit_reason
 
                 _dx = describe_exit_reason("doom_loop")
-                loop.last_exit_reason = "doom_loop"
+                _keep_exit = {
+                    "diag_enough",
+                    "no_write_ignored",
+                    "converge_ignored",
+                    "rust_diag",
+                    "llm_visible_idle",
+                    "stopped_by_user",
+                }
+                _cur_exit = str(getattr(loop, "last_exit_reason", "") or "")
+                if _cur_exit not in _keep_exit:
+                    loop.last_exit_reason = "doom_loop"
                 loop.last_exit_detail = {
                     **_dx,
                     "process_id": _kpid or None,
                     "signatures": _sigs[:8],
+                    "kept_reason": _cur_exit or "doom_loop",
                 }
                 _status = f"{_dx['title']} — {_dx['message'][:80]}"
             except Exception:

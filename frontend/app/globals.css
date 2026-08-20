@@ -1653,3 +1653,14 @@ body.tk-col-resizing * {
   box-shadow: 0 0 8px rgba(232, 185, 62, 0.6);
   animation: tk-blink 0.9s steps(1) infinite;
 }
+
+/* macOS hiddenInset: keep brand text out of the traffic lights */
+html[data-tevarn-os="mac"] .titlebar::before {
+  content: "";
+  display: block;
+  width: 76px;
+  height: 100%;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

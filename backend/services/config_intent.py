@@ -391,6 +391,8 @@ def detect_mcp_micro_loop(text: str) -> dict[str, Any] | None:
     t = (text or "").strip()
     if not t:
         return None
+    if t.startswith("[System auto-resume]"):
+        return None
     if detect_config_intent(t) is not None:
         return None
     # 明确在搜网页 → 不武装配置微 loop
@@ -428,6 +430,7 @@ def detect_mcp_micro_loop(text: str) -> dict[str, Any] | None:
         "max_iters": max(2, _mi),
         "tools": (
             "manage_mcp",
+            "manage_goal",
             "clarify",
             "current_time",
             "update_config",
@@ -543,8 +546,12 @@ async def _exec_mcp_key(payload: dict[str, Any]) -> dict[str, Any]:
         lines.append(f"- 连接：失败 `{str(err)[:160]}`")
         if out.get("conclude"):
             lines.append(
-                "- 【自动收束】配置已写入；请停止对本 server 的重复安装/改配，"
-                "向用户说明原因（网络/URL/timeout）。"
+                "- 【自动收束】请停止对本 server 的重复安装/改配。"
+                + (
+                    " 本机没有可用的 npx/Node，应改用 Tevarn 自带 Python 启动。"
+                    if "npx" in str(err).lower() or "no such file" in str(err).lower()
+                    else f" 原因：{str(err)[:160]}"
+                )
             )
     if out.get("probe_ok") is True:
         lines.append(f"- 探活：成功（{out.get('probe_detail')}）")

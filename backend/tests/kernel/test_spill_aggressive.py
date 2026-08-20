@@ -13,8 +13,9 @@ def test_budgets_support_analysis_not_toy_800() -> None:
 
     assert SPILL_THRESHOLD >= 12_000
     assert DEFAULT_TOOL_BUDGET >= 8_000
-    assert TOOL_RESULT_BUDGET["python"] >= 16_000
-    assert TOOL_RESULT_BUDGET["command"] >= 12_000
+    # Aggressive H2/P1 defaults: prefer spill handle over fat inline context.
+    assert TOOL_RESULT_BUDGET["python"] >= 1_000
+    assert TOOL_RESULT_BUDGET["command"] >= 8_000
     assert SPILL_PREVIEW_CHARS >= 4_000
 
 
@@ -35,8 +36,14 @@ def test_weather_size_stays_inline(monkeypatch) -> None:
     assert out == body
 
 
-def test_large_spill_uses_rich_envelope(monkeypatch) -> None:
+def test_large_spill_uses_rich_envelope(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+
     from backend.agent import tool_result_contract as trc
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: Path(tmp_path)))
 
     class FakeK:
         def result_spill(self, pid, tool, content):
@@ -49,8 +56,9 @@ def test_large_spill_uses_rich_envelope(monkeypatch) -> None:
 
     monkeypatch.setattr("backend.kernel.get_kernel", lambda: FakeK())
     n = max(trc.SPILL_THRESHOLD, trc.TOOL_RESULT_BUDGET["python"]) + 100
-    body = ("LINE-%05d-payload\n" % i for i in range(n // 20 + 5))
-    text = "".join(body)[:n]
+    text = ("LINE-%05d-payload\n" % i for i in range(n))
+    text = "".join(text)[:n]
+    assert len(text) >= n
     out = trc.normalize_tool_result(text, tool_name="python", process_id="p1")
     assert "tool_result_handle id=abc123deadbeef" in out
     assert "result_load" in out

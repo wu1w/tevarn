@@ -68,6 +68,7 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
         "browser",
         "http",
         "fetch_webpage",
+        "result_load",
     ),
     "desktop": (
         "desktop_observe",
@@ -127,7 +128,7 @@ TOOL_PACKS: dict[str, tuple[str, ...]] = {
     "data": ("sqlite_query", "http"),
     "github": ("github", "manage_git"),
     # MCP 运行时工具：静态仅 manage_mcp；tools_for_packs 会并入 live mcp_*
-    "mcp": ("manage_mcp",),
+    "mcp": ("manage_mcp", "result_load"),
     "integrations": ("manage_mcp",),
 }
 
@@ -392,6 +393,7 @@ _SEARCH_ONLY_HINTS = (
 THIN_CHAT_TOOLS: frozenset[str] = frozenset({
     "current_time", "clarify", "session_search", "doc_read", "use_tool_pack",
     "list_available_models", "get_system_status", "capability_status",
+    "result_load",
 })
 THIN_SEARCH_TOOLS: frozenset[str] = frozenset({
     "web_search", "search", "fetch_webpage", "current_time", "clarify",
@@ -432,6 +434,11 @@ _SECRET_HANDOFF_TAIL = re.compile(
 def is_mcp_ops_intent(user_input: str) -> bool:
     """本轮是否在「配置/安装/写密钥」MCP，而非调用搜索。"""
     text = (user_input or "").strip()
+    # Resume injects the Goal summary (often still says "MCP"); that is not a
+    # fresh install. Treating it as ops strips manage_goal and the Goal page
+    # can never close.
+    if text.startswith("[System auto-resume]"):
+        return False
     if not text or not _MCP_MARKERS.search(text):
         return False
     if _MCP_SECRET_HINTS.search(text) or _SECRET_HANDOFF_TAIL.search(text):
@@ -622,6 +629,9 @@ def looks_like_repo_task(user_input: str) -> bool:
 def is_thin_chat_intent(user_input: str) -> bool:
     text = (user_input or "").strip()
     if not text:
+        return True
+    # 编制回调 prompt 很长（夹工单原文），但仍是「立刻短汇报」，按薄会话处理。
+    if text.startswith("【系统·编制自动回调】"):
         return True
     if len(text) > 280:
         return False
@@ -979,6 +989,7 @@ def resolve_enabled_tool_names(
     if _mcp_ops and prof not in {"full"}:
         ops_allow = {
             "manage_mcp",
+            "manage_goal",
             "use_tool_pack",
             "clarify",
             "current_time",
@@ -1065,6 +1076,8 @@ def merge_tools_with_packs(
         if key in {"mcp", "integrations"}:
             delta.update(live_mcp_tool_names())
             delta.add("manage_mcp")
+    if any(pk in {"web", "mcp", "coding", "integrations"} for pk in pack_list):
+        delta.add("result_load")
     return _order_tools(set(current) | delta)
 
 

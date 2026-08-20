@@ -564,10 +564,12 @@ class ManageMcp(BaseTool):
             tips.append("可把 timeout 调到 90–120（mcp-remote/npx 冷启动慢）后由用户再试一次")
         if "streamable" in low or transport in ("streamable-http", "sse"):
             tips.append("确认 url 可达（DeepWiki 用 https://mcp.deepwiki.com/mcp）；网络/代理不可达则勿重试")
-        if "mcp-remote" in low or "npx" in low:
-            tips.append("确认本机 Node/npx 可用；或改用 transport=streamable-http + 官方 url 直连")
+        if "no such file" in low or "filenotfound" in low or "no usable mcp runner" in low:
+            tips.append("本机缺少该命令的真实路径。优先用 python -m 内置 runner，或先装 Node")
+        elif "mcp-remote" in low or "npx" in low:
+            tips.append("确认 npx 能解析成真实文件；或改用 streamable-http 官方 url")
         if not tips:
-            tips.append("检查 transport/url/command、本机运行时与网络；勿用 web_search/command 空探")
+            tips.append("检查 transport/url/command 与本机运行时；勿对同一 server 连环重装")
         tip_line = "；".join(tips)
         return (
             f"⚠️ MCP `{name}` {action}：配置已写入 DB，但连接失败。\n"

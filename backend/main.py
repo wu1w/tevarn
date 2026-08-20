@@ -291,12 +291,16 @@ async def _seed_beginner_knowledge() -> None:
                 new_meta = dict(old_meta)
                 new_meta.update(meta)
                 try:
+                    cur_status = getattr(doc, "status", None) or "ready"
+                    # Unindexed seeds that previously failed vectorize are not errors.
+                    if cur_status == "error" and int(getattr(doc, "chunks_count", 0) or 0) == 0:
+                        cur_status = "ready"
                     await docs.update(
                         doc.id,
                         {
                             "meta": new_meta,
                             "source": "builtin-seed",
-                            "status": getattr(doc, "status", None) or "ready",
+                            "status": cur_status,
                         },
                     )
                     updated += 1
@@ -329,11 +333,19 @@ async def _seed_beginner_knowledge() -> None:
     )
 
     if to_index:
-        # 刷新 list 拿最新 id（create 返回对象）
-        try:
-            _spawn_bg(_index_seed_documents(user.id, to_index), "seed_kb_index")
-        except Exception as e:
-            logger.warning("Schedule seed KB index failed: %s", e)
+        from backend.services.rag.capability import get_rag_status
+
+        rag = get_rag_status()
+        if not rag.index_upload:
+            logger.info(
+                "Seed KB index skipped (vector stack not configured): %s docs left ready",
+                len(to_index),
+            )
+        else:
+            try:
+                _spawn_bg(_index_seed_documents(user.id, to_index), "seed_kb_index")
+            except Exception as e:
+                logger.warning("Schedule seed KB index failed: %s", e)
 
 
 async def _index_seed_documents(user_id: Any, items: list) -> None:
@@ -670,6 +682,20 @@ async def lifespan(app: FastAPI):
             # audit-fix: get_kernel 为同步重调用（可触达 host 启动/RPC），
             # 放线程避免阻塞 lifespan 事件循环
             kernel = await asyncio.to_thread(get_kernel)
+            # Dead backend leaves Rust LLM leases in-flight. Same identity
+            # is capped at 1 slot, so the next chat sits on 思考中 forever.
+            try:
+                from backend.kernel.llm_admission import get_llm_admission
+
+                _adm = get_llm_admission()
+                _rec = await _adm.reclaim(
+                    null_pid_max_hold_secs=0.0,
+                    max_hold_secs=1.0,
+                    force=False,
+                )
+                logger.info("LLM admission startup reclaim: %s", _rec)
+            except Exception as _adm_e:
+                logger.warning("LLM admission startup reclaim skipped: %s", _adm_e)
             if bool(getattr(settings, "agent_kernel_persistence", True)):
                 inbox, dispatcher = init_workforce(kernel, AsyncSessionLocal, settings)
                 if dispatcher is not None:

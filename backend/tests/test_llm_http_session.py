@@ -109,6 +109,64 @@ def test_slow_provider_times_out_fast(svc, http_server, fast_timeout):
     )
 
 
+def test_stream_first_event_timeout_does_not_wait_sock_read():
+    """Headers 已返回但一直没有 SSE data → 应按 first_event 超时，而不是挂 300s。"""
+    import asyncio
+    import time as _time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from types import SimpleNamespace
+
+    from backend.core.config import settings
+    from backend.services.llm.openai_compatible import OpenAICompatibleService
+
+    class _Hang(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            # 只写注释保活，不写 data: — 模拟 xAI 空流
+            try:
+                self.wfile.write(b": ping\n\n")
+                self.wfile.flush()
+                _time.sleep(8)
+            except BrokenPipeError:
+                pass
+
+        def log_message(self, *args):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Hang)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    old = settings.llm_stream_first_event_timeout_seconds
+    settings.llm_stream_first_event_timeout_seconds = 0.4
+    svc = OpenAICompatibleService(
+        config=SimpleNamespace(
+            base_url=f"http://127.0.0.1:{srv.server_port}",
+            model="m",
+            max_tokens=100,
+            temperature=0.7,
+            api_key="k",
+        )
+    )
+    try:
+
+        async def _run():
+            t0 = _time.perf_counter()
+            chunks = []
+            async for ch in svc.chat([{"role": "user", "content": "hi"}], stream=True):
+                chunks.append(ch)
+            return _time.perf_counter() - t0, chunks
+
+        elapsed, chunks = asyncio.run(_run())
+    finally:
+        settings.llm_stream_first_event_timeout_seconds = old
+        srv.shutdown()
+        srv.server_close()
+    assert elapsed < 2.5, f"first-event timeout 未生效: {elapsed:.2f}s"
+    assert any(c.finish_reason == "error" for c in chunks)
+
+
 def test_fast_provider_roundtrip(svc):
     """正常 provider：真实 HTTP 往返拿到内容（证明改造没破坏正常路径）"""
     async def _run():

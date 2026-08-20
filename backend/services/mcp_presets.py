@@ -63,6 +63,11 @@ PRESETS: tuple[McpPreset, ...] = (
         aliases=("tavily", "tavily-search", "tavily_search"),
         env_key="TAVILY_API_KEY",
         runners=(
+            (
+                "module",
+                "backend.mcp_hub.runners.tavily",
+                (),
+            ),
             ("npx_pkg", "tavily-mcp@latest", ("-y", "tavily-mcp@latest")),
             ("uvx_pkg", "tavily-mcp", ("tavily-mcp",)),
         ),
@@ -193,12 +198,10 @@ def resolve_uvx_path() -> str | None:
 
 def resolve_npx_path() -> str | None:
     try:
-        from backend.core.host_commands import resolve_host_command
+        from backend.core.host_commands import resolve_existing_command
 
-        r = resolve_host_command("npx")
-        if r and r.lower() not in ("npx", "npx.cmd") and Path(r).is_file():
-            return r
-        if r and Path(r).is_file():
+        r = resolve_existing_command("npx") or resolve_existing_command("npx.cmd")
+        if r:
             return r
     except Exception:
         pass
@@ -212,23 +215,44 @@ def resolve_npx_path() -> str | None:
     return shutil.which("npx") or shutil.which("npx.cmd")
 
 
+class McpRunnerUnavailable(RuntimeError):
+    """No usable stdio runner on this machine (do not persist a bare npx/uvx)."""
+
+
 def resolve_preset_command(preset: McpPreset) -> tuple[str, list[str], str]:
-    """返回 (command, args, note)。remote URL 预设不走此函数。"""
+    """返回 (command, args, note)。找不到真实可执行文件则抛错，绝不写 bare npx。"""
     if not preset.runners:
         raise ValueError(f"preset '{preset.id}' has no stdio runners")
     py = sys.executable
     uvx = resolve_uvx_path()
     npx = resolve_npx_path()
+    tried: list[str] = []
     for kind, pkg, tail in preset.runners:
         if kind == "module":
+            if not (py and Path(py).is_file()):
+                tried.append(f"module:{pkg} (python missing)")
+                continue
+            script = None
+            try:
+                import importlib.util
+
+                spec = importlib.util.find_spec(pkg)
+                origin = getattr(spec, "origin", None) if spec else None
+                if origin and Path(origin).is_file():
+                    script = str(Path(origin).resolve())
+            except Exception:
+                script = None
+            if script:
+                return py, [script, *list(tail)], f"python {Path(script).name}"
             return py, ["-m", pkg, *list(tail)], f"python -m {pkg}"
         if kind == "npx_pkg":
             if npx:
                 args = list(tail) if tail else ["-y", pkg]
                 return npx, args, f"resolved npx: {npx}"
+            tried.append(f"npx:{pkg}")
+            continue
         if kind == "uvx_pkg":
             if uvx:
-                # tail 可含 --with 等 uvx 选项；最终仍以 entrypoint 结尾
                 if not tail:
                     args = ["--from", pkg, pkg]
                 elif tail[0] == "--from":
@@ -236,14 +260,13 @@ def resolve_preset_command(preset: McpPreset) -> tuple[str, list[str], str]:
                 else:
                     args = ["--from", pkg, *list(tail)]
                 return uvx, args, f"builtin uvx: {uvx}"
-    # 最后回退
-    kind0, pkg0, tail0 = preset.runners[0]
-    if kind0 == "npx_pkg":
-        return "npx", list(tail0) if tail0 else ["-y", pkg0], "fallback bare npx"
-    return (
-        "uvx",
-        ["--from", pkg0, *list(tail0)],
-        "fallback bare uvx (PATH)",
+            tried.append(f"uvx:{pkg}")
+            continue
+        tried.append(f"{kind}:{pkg}")
+    raise McpRunnerUnavailable(
+        f"No usable MCP runner for '{preset.id}' on this machine "
+        f"(tried {', '.join(tried) or 'none'}). "
+        "Need a real python/npx/uvx path — not a bare command name."
     )
 
 
@@ -273,7 +296,30 @@ async def ensure_mcp_preset(
         runner_note = f"{transport}: {url}"
     else:
         transport = "stdio"
-        command, args, runner_note = resolve_preset_command(preset)
+        try:
+            command, args, runner_note = resolve_preset_command(preset)
+        except McpRunnerUnavailable as e:
+            return {
+                "ok": False,
+                "action": "skipped",
+                "server_name": name,
+                "server_id": "",
+                "command": None,
+                "args": [],
+                "url": url,
+                "transport": transport,
+                "timeout": timeout,
+                "runner_note": str(e),
+                "env_key": preset.env_key,
+                "tools_registered": 0,
+                "reload_error": str(e),
+                "connect_error": str(e),
+                "probe_ok": None,
+                "probe_detail": "",
+                "preset_id": preset.id,
+                "db_written": False,
+                "conclude": True,
+            }
 
     env: dict[str, str] = {}
     if preset.env_key and api_key:

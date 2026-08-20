@@ -536,6 +536,50 @@ async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any])
         max_c = 50_000
     max_c = max(500, min(max_c, 200_000))
 
+    def _page_body(body: str) -> str:
+        total = len(body)
+        if offset >= total:
+            return (
+                f"[result_load id={hid} offset={offset} total={total}]\n"
+                "(empty — offset past end)"
+            )
+        chunk = body[offset : offset + max_c]
+        end = offset + len(chunk)
+        more = end < total
+        header = (
+            f"[result_load id={hid} offset={offset} end={end} "
+            f"total={total} page_chars={len(chunk)}]\n"
+        )
+        if more:
+            footer = (
+                f"\n...[more available: call result_load "
+                f'id="{hid}" offset={end} max_chars={max_c}]'
+            )
+        else:
+            footer = f"\n...[end of result id={hid}]"
+        return header + chunk + footer
+
+    def _session_fallback() -> str:
+        # Loop injects _session_id; do not trust a model-forged session_id.
+        sid = str(arguments.get("_session_id") or "").strip()
+        try:
+            from backend.agent.result_handle_store import load
+
+            return _page_body(load(sid, hid))
+        except (KeyError, ValueError):
+            try:
+                from backend.agent.result_handle_store import list_handles
+
+                live = list_handles(sid)
+            except Exception:
+                live = []
+            names = [str(h.get("id") or "") for h in live if h.get("id")]
+            listed = ", ".join(names) if names else "(none)"
+            return (
+                f"[Error] unknown result handle {hid}. "
+                f"live in this session: {listed}"
+            )
+
     try:
         from backend.kernel import get_kernel
 
@@ -553,13 +597,13 @@ async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any])
                 "result_load", {"handle_id": hid, "process_id": pid}
             ) or {}
         else:
-            return "[Error] kernel result_load unavailable"
+            return _session_fallback()
         if isinstance(r, dict):
             if r.get("error"):
-                return f"[Error] result_load: {r.get('error')}"
+                return _session_fallback()
             msg = str(r.get("message") or "")
             if msg and "process" in msg.lower() and "content" not in r:
-                return f"[Error] result_load: {msg}"
+                return _session_fallback()
             # host 可能返回 {content} / {body} / {text}
             body = ""
             for key in ("content", "body", "text", "result"):
@@ -571,31 +615,11 @@ async def execute_result_load(config: dict[str, Any], arguments: dict[str, Any])
 
                 body = json.dumps(r, ensure_ascii=False, default=str)
 
-            total = len(body)
-            if offset >= total:
-                return (
-                    f"[result_load id={hid} offset={offset} total={total}]\n"
-                    "(empty — offset past end)"
-                )
-            chunk = body[offset : offset + max_c]
-            end = offset + len(chunk)
-            more = end < total
-            header = (
-                f"[result_load id={hid} offset={offset} end={end} "
-                f"total={total} page_chars={len(chunk)}]\n"
-            )
-            footer = ""
-            if more:
-                footer = (
-                    f"\n...[more available: call result_load "
-                    f"id=\"{hid}\" offset={end} max_chars={max_c}]"
-                )
-            else:
-                footer = f"\n...[end of result id={hid}]"
-            return header + chunk + footer
+            return _page_body(body)
         return str(r)
-    except Exception as e:
-        return f"[Error] result_load failed: {e}"
+    except Exception:
+        # New kernel process / unknown handle / NotFound / another process
+        return _session_fallback()
 
 
 class ResultLoadTool(_BuiltinToolBase):

@@ -7,6 +7,10 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 
+if (process.platform === 'darwin') {
+  document.documentElement.dataset.tevarnOs = 'mac';
+}
+
 // 同步注入：保证在任意前端模块 import 之前全局变量已就绪
 // REST 在桌面端走同源 /api 反代；WS 也优先同源（主进程 upgrade 反代到真实后端端口）
 try {

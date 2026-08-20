@@ -12,7 +12,7 @@ replaying long 「强制收束」status inventories into the next run context.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Optional
 
 # Open/close tags must match frontend parseMessageContent PAIR_TAGS
 _THINK_OPEN = "<thinking>"
@@ -29,6 +29,36 @@ _THINK_OPEN_UNCLOSED_RE = re.compile(
     r"(?:<thinking\b[^>]*>|<think\b[^>]*>|\[Thinking\]|【思考】)([\s\S]*)$",
     re.I,
 )
+
+# Placeholders must not resemble think / tool-leak tags.
+_CODE_MASK_RE = re.compile(r"\x00TEVARN_CODE_(\d+)\x00")
+_FENCE_RE = re.compile(r"```[\s\S]*?```")
+_INLINE_DBL_RE = re.compile(r"``[^`\n]*``")
+_INLINE_SGL_RE = re.compile(r"`[^`\n]+`")
+
+
+def _mask_code_spans(text: str) -> tuple[str, list[str]]:
+    """Hide fenced code and inline backticks so think-tag regexes skip docs."""
+    held: list[str] = []
+
+    def _hold(m: re.Match[str]) -> str:
+        held.append(m.group(0))
+        return f"\x00TEVARN_CODE_{len(held) - 1}\x00"
+
+    s = _FENCE_RE.sub(_hold, text)
+    s = _INLINE_DBL_RE.sub(_hold, s)
+    s = _INLINE_SGL_RE.sub(_hold, s)
+    return s, held
+
+
+def _unmask_code_spans(text: str, held: list[str]) -> str:
+    def _put(m: re.Match[str]) -> str:
+        i = int(m.group(1))
+        if 0 <= i < len(held):
+            return held[i]
+        return m.group(0)
+
+    return _CODE_MASK_RE.sub(_put, text)
 
 # Force-final / segment-end scare patterns that pollute chat + resume context
 _FORCE_FINAL_MARKERS = re.compile(
@@ -71,12 +101,19 @@ def wrap_thinking(reasoning: Optional[str], content: Optional[str]) -> str:
 
 
 def strip_thinking(text: Optional[str]) -> str:
-    """Remove closed (and trailing unclosed) thinking blocks; return visible body."""
+    """Remove closed (and trailing unclosed) thinking blocks; return visible body.
+
+    Fenced code and inline backticks are masked first so documenting
+    ``<think>`` / ``</think>`` in prose cannot eat the rest of the message.
+    Real leading ``<thinking>…`` (closed or unclosed) is still stripped.
+    """
     if not text:
         return ""
-    s = _THINK_BLOCK_RE.sub("", text)
+    masked, held = _mask_code_spans(text)
+    s = _THINK_BLOCK_RE.sub("", masked)
     s = _THINK_OPEN_UNCLOSED_RE.sub("", s)
-    # fenced ```thinking
+    s = _unmask_code_spans(s, held)
+    # fenced ```thinking (real CoT fences, not backtick-documented tags)
     s = re.sub(r"```(?:thinking|thought|reasoning)\s*\n[\s\S]*?```", "", s, flags=re.I)
     return s.strip()
 
@@ -89,6 +126,7 @@ def extract_reasoning_content(text: Optional[str]) -> str:
     """
     if not text:
         return ""
+    text, held = _mask_code_spans(text)
     parts: list[str] = []
 
     def _inner(block: str) -> str:
@@ -120,7 +158,92 @@ def extract_reasoning_content(text: Optional[str]) -> str:
             tail = (m2.group(1) or "").strip()
             if tail:
                 parts.append(tail)
-    return "\n\n".join(parts).strip()
+    return _unmask_code_spans("\n\n".join(parts).strip(), held)
+
+
+# Persist-shape for reasoning: messages.tool_calls JSON has no sibling column.
+# List-compatible (MessageRead): first real call carries ``_tevarn_reasoning``.
+# Load also accepts wrap ``{"calls":[...], "reasoning":"..."}``.
+TEVARN_REASONING_KEY = "_tevarn_reasoning"
+
+
+def _is_reasoning_sentinel(tc: Any) -> bool:
+    if not isinstance(tc, dict) or TEVARN_REASONING_KEY not in tc:
+        return False
+    if tc.get("id") or tc.get("function"):
+        return False
+    t = tc.get("type")
+    if t and t not in (TEVARN_REASONING_KEY, "reasoning"):
+        return False
+    return True
+
+
+def stash_reasoning_in_tool_calls(tool_calls: Any, reasoning: str | None) -> Any:
+    """Attach reasoning onto tool_calls JSON without touching user-visible content."""
+    r = (reasoning or "").strip()
+    if isinstance(tool_calls, dict) and (
+        "calls" in tool_calls or "tool_calls" in tool_calls
+    ):
+        inner = tool_calls.get("calls") or tool_calls.get("tool_calls") or []
+        return stash_reasoning_in_tool_calls(inner, r)
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return tool_calls
+    calls: list[Any] = []
+    for tc in tool_calls:
+        if _is_reasoning_sentinel(tc):
+            continue
+        if isinstance(tc, dict):
+            tc2 = dict(tc)
+            tc2.pop(TEVARN_REASONING_KEY, None)
+            calls.append(tc2)
+        else:
+            calls.append(tc)
+    if r:
+        for tc in calls:
+            if isinstance(tc, dict):
+                tc[TEVARN_REASONING_KEY] = r
+                break
+    return calls
+
+
+def split_reasoning_from_tool_calls(tool_calls: Any) -> tuple[Any, str]:
+    """Undo persist-shape: clean tool_calls list + stashed reasoning string."""
+    if tool_calls is None:
+        return None, ""
+    if isinstance(tool_calls, dict):
+        reasoning = str(
+            tool_calls.get("reasoning")
+            or tool_calls.get(TEVARN_REASONING_KEY)
+            or ""
+        ).strip()
+        inner = tool_calls.get("calls")
+        if inner is None:
+            inner = tool_calls.get("tool_calls")
+        if isinstance(inner, list):
+            calls, extra = split_reasoning_from_tool_calls(inner)
+            return calls, reasoning or extra
+        if tool_calls.get("id") or tool_calls.get("function"):
+            tc2 = dict(tool_calls)
+            r = str(tc2.pop(TEVARN_REASONING_KEY, "") or reasoning)
+            return [tc2], r.strip()
+        return None, reasoning
+    if not isinstance(tool_calls, list):
+        return tool_calls, ""
+    reasoning = ""
+    calls: list[Any] = []
+    for tc in tool_calls:
+        if _is_reasoning_sentinel(tc):
+            reasoning = str(tc.get(TEVARN_REASONING_KEY) or reasoning or "")
+            continue
+        if isinstance(tc, dict):
+            tc2 = dict(tc)
+            r = str(tc2.pop(TEVARN_REASONING_KEY, "") or "")
+            if r:
+                reasoning = r
+            calls.append(tc2)
+        else:
+            calls.append(tc)
+    return calls, reasoning.strip()
 
 
 def is_visible_empty(text: Optional[str]) -> bool:

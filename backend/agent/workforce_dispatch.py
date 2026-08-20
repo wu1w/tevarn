@@ -206,6 +206,8 @@ STEWARD_FORCE_TOOLS: tuple[str, ...] = (
     "clarify",
     "okr_goal",
     "manage_goal",
+    "manage_mcp",
+    "manage_skill",
     "autopilot",
 )
 
@@ -228,6 +230,8 @@ _STEWARD_FALLBACK_CAPS: tuple[str, ...] = (
     "okr_goal",
     "manage_goal",
     "autopilot",
+    "manage_mcp",
+    "manage_skill",
     "delegate_task",
     "agent_call",
     "web_search",

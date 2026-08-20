@@ -1167,13 +1167,17 @@ class WorkforceDispatcher:
                 user_id=owner,
                 notification_repo=AsyncNotificationRepository(),
             )
-            # 汇总轮极短：避免再烧 10 轮工具
+            # 汇总轮极短：避免再烧 10 轮工具。
+            # 必须关掉 auto_continue，否则 4 轮/段 × 5 段 ≈ 20 轮，
+            # 且回调正文里的「写报告」会被误判成 coding write-intent。
             try:
                 loop.max_iterations = min(
                     int(getattr(loop, "max_iterations", 12) or 12), max_iter
                 )
             except Exception:
                 pass
+            loop._auto_continue = False
+            loop._rollup_turn = True
             logger.info(
                 "ceo rollup start batch=%s session=%s items=%s",
                 batch_key,
@@ -1600,9 +1604,15 @@ class WorkforceDispatcher:
         loop._workforce_skip_history = True
         loop._identity_id = str(ident.id)
         loop._identity_name = str(ident.name)
-        loop._identity_capabilities = (
-            list(ident.capabilities) if ident.capabilities is not None else []
-        )
+        _caps = list(ident.capabilities) if ident.capabilities is not None else []
+        if _caps:
+            try:
+                from backend.agent.grant_store import expand_implied_tool_caps
+
+                _caps = expand_implied_tool_caps(_caps) or _caps
+            except Exception:
+                pass
+        loop._identity_capabilities = _caps
         _budget = self._effective_budget(
             ident, str(item.instruction or ""), item=item
         )
@@ -1630,7 +1640,7 @@ class WorkforceDispatcher:
         _owner = getattr(ident, "user_id", None)
         _owner_s = str(_owner) if _owner else None
         loop._pending_kernel_options = {
-            "capabilities": list(ident.capabilities) if ident.capabilities is not None else None,
+            "capabilities": list(_caps) if ident.capabilities is not None else None,
             "token_budget": _budget,
             "meta": {
                 "workforce": True,
